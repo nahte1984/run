@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v7.0 (Fire Background & Heart Eyes)</title>
+    <title>whenever i see u | v8.0 (Background Fireworks & Heart Eyes)</title>
     <style>
         body {
             margin: 0;
@@ -78,137 +78,75 @@
             #define PI      3.141592653589793
             #define TWO_PI  6.283185307179586
 
+            // --- 背景星空的雜訊與隨機函數 ---
+            vec3 hash( vec3 p ) {
+                p = vec3( dot(p,vec3(127.1,311.7, 74.7)),
+                          dot(p,vec3(269.5,183.3,246.1)),
+                          dot(p,vec3(113.5,271.9,124.6)));
+                return -1.0 + 2.0*fract(sin(p)*43758.5453123);
+            }
+
+            float noise( in vec3 p ) {
+                vec3 i = floor( p );
+                vec3 f = fract( p );
+                vec3 u = f*f*(3.0-2.0*f);
+                return mix( mix( mix( dot( hash( i + vec3(0.0,0.0,0.0) ), f - vec3(0.0,0.0,0.0) ), 
+                                      dot( hash( i + vec3(1.0,0.0,0.0) ), f - vec3(1.0,0.0,0.0) ), u.x),
+                                 mix( dot( hash( i + vec3(0.0,1.0,0.0) ), f - vec3(0.0,1.0,0.0) ), 
+                                      dot( hash( i + vec3(1.0,1.0,0.0) ), f - vec3(1.0,1.0,0.0) ), u.x), u.y),
+                            mix( mix( dot( hash( i + vec3(0.0,0.0,1.0) ), f - vec3(0.0,0.0,1.0) ), 
+                                      dot( hash( i + vec3(1.0,0.0,1.0) ), f - vec3(1.0,0.0,1.0) ), u.x),
+                                 mix( dot( hash( i + vec3(0.0,1.0,1.0) ), f - vec3(0.0,1.0,1.0) ), 
+                                      dot( hash( i + vec3(1.0,1.0,1.0) ), f - vec3(1.0,1.0,1.0) ), u.x), u.y), u.z );
+            }
+
             // ==========================================
-            // 火焰背景設定 (Fire Background Parameters)
+            // 背景煙火設定 (Background Fireworks)
             // ==========================================
-            #define ANIMATION_SPEED 1.5
-            #define MOVEMENT_SPEED 1.0
-            #define MOVEMENT_DIRECTION vec2(0.7, -1.0)
-            #define PARTICLE_SIZE 0.009
-            #define PARTICLE_SCALE (vec2(0.5, 1.6))
-            #define PARTICLE_SCALE_VAR (vec2(0.25, 0.2))
-            #define PARTICLE_BLOOM_SCALE (vec2(0.5, 0.8))
-            #define PARTICLE_BLOOM_SCALE_VAR (vec2(0.3, 0.1))
-            #define SPARK_COLOR vec3(1.0, 0.4, 0.05) * 1.5
-            #define BLOOM_COLOR vec3(1.0, 0.4, 0.05) * 0.8
-            #define SMOKE_COLOR vec3(1.0, 0.43, 0.1) * 0.8
-            #define SIZE_MOD 1.05
-            #define ALPHA_MOD 0.9
-            #define LAYERS_COUNT 15
+            #define Gravitational_ACCE vec2(0.0, -0.2)
+            #define NUM_SPARKS 30
+            #define NUM_FIREWORKS 5
+            #define Period 5.0
 
-            // --- 火焰所需的 Hash 與 Noise 演算法 (已為你補齊) ---
-            float hash1_2(in vec2 p) {
-                vec3 p3  = fract(vec3(p.xyx) * .1031);
-                p3 += dot(p3, p3.yzx + 33.33);
-                return fract((p3.x + p3.y) * p3.z);
+            float rand(float co) { 
+                return fract(sin(co*(91.3458)) * 47453.5453);
             }
 
-            vec2 hash2_2(vec2 p) {
-                vec3 p3 = fract(vec3(p.xyx) * vec3(.1031, .1030, .0973));
-                p3 += dot(p3, p3.yzx+33.33);
-                return fract((p3.xx+p3.yz)*p3.zy);
+            vec3 spark(vec2 coord, vec2 origin, vec3 sparkColor, vec2 velocity, float periodTime, float seed) {
+                vec2 displacement = velocity * periodTime + 0.5 * Gravitational_ACCE * periodTime * periodTime;
+                vec2 sparkPos = origin + displacement;
+                float len = length(coord - sparkPos);
+                
+                // 修正 smoothstep 在 WebGL 1.0 的安全寫法 (從小到大)
+                vec3 color = sparkColor * pow(1.0 - smoothstep(0.001, 0.05, len), 8.0);
+                color += vec3(1.0) * (1.0 - smoothstep(0.001, 0.005, len));
+                color *= (1.0 - smoothstep(0.0, Period, periodTime));
+                color *= sin(periodTime*50.0 + seed)*0.4 + 0.6;
+                return color;
             }
 
-            float noise1_2(vec2 p) {
-                vec2 i = floor(p);
-                vec2 f = fract(p);
-                vec2 u = f*f*(3.0-2.0*f);
-                return mix(mix(hash1_2(i + vec2(0.0,0.0)), hash1_2(i + vec2(1.0,0.0)), u.x),
-                           mix(hash1_2(i + vec2(0.0,1.0)), hash1_2(i + vec2(1.0,1.0)), u.x), u.y);
-            }
+            vec3 firework(vec2 coord, float currentPeriod, float periodTime) {   
+                vec2 origin;
+                origin.x = (0.2 + 0.6*rand(currentPeriod)) * iResolution.x/iResolution.y ;
+                origin.y = (0.4 + 0.4*rand(currentPeriod));
 
-            vec2 noise2_2(vec2 p) {
-                vec2 i = floor(p);
-                vec2 f = fract(p);
-                vec2 u = f*f*(3.0-2.0*f);
-                return mix(mix(hash2_2(i + vec2(0.0,0.0)), hash2_2(i + vec2(1.0,0.0)), u.x),
-                           mix(hash2_2(i + vec2(0.0,1.0)), hash2_2(i + vec2(1.0,1.0)), u.x), u.y);
-            }
-
-            // --- 火焰粒子渲染 ---
-            float layeredNoise1_2(in vec2 uv, in float sizeMod, in float alphaMod, in int layers, in float animation) {
-                float noise = 0.0;
-                float alpha = 1.0;
-                float size = 1.0;
-                vec2 offset = vec2(0.0);
-                for (int i = 0; i < 15; i++) {
-                    if(i >= layers) break; // WebGL 相容性寫法
-                    offset += hash2_2(vec2(alpha, size)) * 10.0;
-                    noise += noise1_2(uv * size + iTime * animation * 8.0 * MOVEMENT_DIRECTION * MOVEMENT_SPEED + offset) * alpha;
-                    alpha *= alphaMod;
-                    size *= sizeMod;
+                vec3 color = vec3(0.0);
+                // 改用標準的整數迴圈，確保跨裝置支援性
+                for(int i=0; i < NUM_SPARKS; i++) {
+                    float fi = float(i);
+                    vec2 velocity;
+                    velocity.x = 0.5*(rand(currentPeriod+fi*0.4)-0.5);
+                    velocity.y = 0.5*(rand(currentPeriod+fi*0.5)-0.5);
+                    velocity = normalize(velocity);
+                    velocity *= 0.2 + rand(currentPeriod+fi*0.6) * 0.3;
+                    
+                    vec3 sparkColor;
+                    sparkColor.r = 0.3+0.7*rand(currentPeriod+fi*0.1);
+                    sparkColor.g = 0.3+0.7*rand(currentPeriod+fi*0.2);
+                    sparkColor.b = 0.3+0.7*rand(currentPeriod+fi*0.3);
+                    color += spark(coord, origin, sparkColor, velocity, periodTime, fi);
                 }
-                noise *= (1.0 - alphaMod)/(1.0 - pow(alphaMod, float(layers)));
-                return noise;
-            }
-
-            vec2 rotate(in vec2 point, in float deg) {
-                float s = sin(deg);
-                float c = cos(deg);
-                return mat2(s, c, -c, s) * point;
-            }
-
-            vec2 voronoiPointFromRoot(in vec2 root, in float deg) {
-                vec2 point = hash2_2(root) - 0.5;
-                float s = sin(deg);
-                float c = cos(deg);
-                point = mat2(s, c, -c, s) * point * 0.66;
-                point += root + 0.5;
-                return point;
-            }
-
-            float degFromRootUV(in vec2 uv) {
-                return iTime * ANIMATION_SPEED * (hash1_2(uv) - 0.5) * 2.0;  
-            }
-
-            vec2 randomAround2_2(in vec2 point, in vec2 range, in vec2 uv) {
-                return point + (hash2_2(uv) - 0.5) * range;
-            }
-
-            vec3 fireParticles(in vec2 uv, in vec2 originalUV) {
-                vec3 particles = vec3(0.0);
-                vec2 rootUV = floor(uv);
-                float deg = degFromRootUV(rootUV);
-                vec2 pointUV = voronoiPointFromRoot(rootUV, deg);
-                float dist = 2.0;
-                float distBloom = 0.0;
-               
-                vec2 tempUV = uv + (noise2_2(uv * 2.0) - 0.5) * 0.1;
-                tempUV += -(noise2_2(uv * 3.0 + iTime) - 0.5) * 0.07;
-
-                dist = length(rotate(tempUV - pointUV, 0.7) * randomAround2_2(PARTICLE_SCALE, PARTICLE_SCALE_VAR, rootUV));
-                distBloom = length(rotate(tempUV - pointUV, 0.7) * randomAround2_2(PARTICLE_BLOOM_SCALE, PARTICLE_BLOOM_SCALE_VAR, rootUV));
-
-                particles += (1.0 - smoothstep(PARTICLE_SIZE * 0.6, PARTICLE_SIZE * 3.0, dist)) * SPARK_COLOR;
-                particles += pow((1.0 - smoothstep(0.0, PARTICLE_SIZE * 6.0, distBloom)) * 1.0, 3.0) * BLOOM_COLOR;
-
-                float border = (hash1_2(rootUV) - 0.5) * 2.0;
-                float disappear = 1.0 - smoothstep(border, border + 0.5, originalUV.y);
-                
-                border = (hash1_2(rootUV + 0.214) - 1.8) * 0.7;
-                float appear = smoothstep(border, border + 0.4, originalUV.y);
-                
-                return particles * disappear * appear;
-            }
-
-            vec3 layeredParticles(in vec2 uv, in float sizeMod, in float alphaMod, in int layers, in float smoke) { 
-                vec3 particles = vec3(0.0);
-                float size = 1.0;
-                float alpha = 1.0;
-                vec2 offset = vec2(0.0);
-                vec2 noiseOffset;
-                vec2 bokehUV;
-                
-                for (int i = 0; i < 15; i++) {
-                    if(i >= layers) break; // WebGL 相容性寫法
-                    noiseOffset = (noise2_2(uv * size * 2.0 + 0.5) - 0.5) * 0.15;
-                    bokehUV = (uv * size + iTime * MOVEMENT_DIRECTION * MOVEMENT_SPEED) + offset + noiseOffset; 
-                    particles += fireParticles(bokehUV, uv) * alpha * (1.0 - smoothstep(0.0, 1.0, smoke) * (float(i) / float(layers)));
-                    offset += hash2_2(vec2(alpha, alpha)) * 10.0;
-                    alpha *= alphaMod;
-                    size *= sizeMod;
-                }
-                return particles;
+                return color;
             }
 
             // ==========================================
@@ -331,28 +269,42 @@
                 cameraCol *= 0.55;
                 
                 // ==========================================
-                // 2. 融入火焰背景 (Fire Shader)
+                // 2. 融入背景點綴星空
                 // ==========================================
-                vec2 fireUV = (2.0 * gl_FragCoord.xy - iResolution.xy) / iResolution.x;
-                float fireVignette = 1.0 - smoothstep(0.4, 1.4, length(fireUV + vec2(0.0, 0.3)));
-                fireUV *= 1.8;
+                vec2 starUv = gl_FragCoord.xy / iResolution.xy;
+                vec3 stars_direction = normalize(vec3((starUv * 2.0 - 1.0) * vec2(screenAspect, 1.0), 1.0)); 
                 
-                float smokeIntensity = layeredNoise1_2(fireUV * 10.0 + iTime * 4.0 * MOVEMENT_DIRECTION * MOVEMENT_SPEED, 1.7, 0.7, 6, 0.2);
-                smokeIntensity *= pow(1.0 - smoothstep(-1.0, 1.6, fireUV.y), 2.0); 
-                vec3 smoke = smokeIntensity * SMOKE_COLOR * 0.8 * fireVignette;
+                float stars_threshold = 9.0; 
+                float stars_exposure = 175.0; 
+                float stars = pow(clamp(noise(stars_direction * 200.0), 0.0, 1.0), stars_threshold) * stars_exposure;
+                stars *= mix(0.4, 1.4, noise(stars_direction * 100.0 + vec3(iTime)));
                 
-                smoke *= pow(layeredNoise1_2(fireUV * 4.0 + iTime * 0.5 * MOVEMENT_DIRECTION * MOVEMENT_SPEED, 1.8, 0.5, 3, 0.2), 2.0) * 1.5;
-                
-                vec3 particles = layeredParticles(fireUV, SIZE_MOD, ALPHA_MOD, LAYERS_COUNT, smokeIntensity);
-                vec3 fireBgCol = particles + smoke + SMOKE_COLOR * 0.02;
-                fireBgCol *= fireVignette;
-                fireBgCol = smoothstep(-0.08, 1.0, fireBgCol);
+                float starFocus = smoothstep(0.9, 0.3, distFromCenter);
+                stars *= starFocus;
 
-                // 將火焰疊加到背景 (Screen/Additive Blending)
-                vec3 finalCol = clamp(cameraCol + fireBgCol, 0.0, 1.0);
+                vec3 finalCol = clamp(cameraCol + vec3(stars), 0.0, 1.0);
 
                 // ==========================================
-                // 3. 愛心煙火噴發特效
+                // 3. 融入背景煙火 (去除藍色背景，保留疊加)
+                // ==========================================
+                vec2 fwCoord = gl_FragCoord.xy / iResolution.y;
+                vec3 fwColor = vec3(0.0);
+                
+                for(int i=0; i < NUM_FIREWORKS; i++) {
+                    float fi = float(i);
+                    float timeOffset = Period / float(NUM_FIREWORKS) * (0.5 + rand(fi));
+                    float time = iTime + fi*timeOffset;
+                    float periodTime = mod(time, Period);
+                    float periodOffset = fi * 10.0; 
+                    float currentPeriod = floor(time/Period + periodOffset);
+                    
+                    fwColor += firework(fwCoord, currentPeriod, periodTime);
+                }
+                // 將背景煙火以發光模式疊加
+                finalCol = clamp(finalCol + fwColor, 0.0, 1.0);
+
+                // ==========================================
+                // 4. 愛心煙火噴發特效
                 // ==========================================
                 vec2 uv = gl_FragCoord.xy / iResolution.xy;
                 uv.x -= 0.5;
@@ -375,7 +327,7 @@
                 finalCol = clamp(finalCol + eyeFX, 0.0, 1.0);
                 
                 // ==========================================
-                // 4. 全局畫面暗角 (Vignette)
+                // 5. 全局畫面暗角 (Vignette)
                 // ==========================================
                 float vignette = smoothstep(0.75, 0.25, distFromCenter);
                 finalCol *= mix(0.3, 1.0, vignette);
