@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>互動眼睛煙火特效 - 大禮花暗底版</title>
+    <title>互動眼睛煙火特效 - 超大禮花動態星空版</title>
     <style>
         body {
             margin: 0;
@@ -80,227 +80,26 @@
             #define saturate(x) clamp(x,0.,1.)
 
             #define NUM_EXPLOSIONS 4.
-            // 稍微增加粒子數，讓擴散變廣時不會顯得太稀疏
+            // 保持粒子的豐盈度
             #define NUM_PARTICLES 55.
 
-            #define MOD3 vec3(.1031,.11369,.13787)
-            vec3 hash31(float p) {
-               vec3 p3 = fract(vec3(p) * MOD3);
-               p3 += dot(p3, p3.yzx + 19.19);
-               return fract(vec3((p3.x + p3.y)*p3.z, (p3.x+p3.z)*p3.y, (p3.y+p3.z)*p3.x));
+            // --- 引入的 3D Gradient Noise 函數與工具 ---
+            vec3 hash( vec3 p ) 
+            {
+                p = vec3( dot(p,vec3(127.1,311.7, 74.7)),
+                          dot(p,vec3(269.5,183.3,246.1)),
+                          dot(p,vec3(113.5,271.9,124.6)));
+
+                return -1.0 + 2.0*fract(sin(p)*43758.5453123);
             }
 
-            float circ(vec2 uv, vec2 pos, float size) {
-                uv -= pos;
-                return S(size * 1.2, size, dot(uv, uv));
-            }
+            float noise( in vec3 p )
+            {
+                vec3 i = floor( p );
+                vec3 f = fract( p );
+                vec3 u = f*f*(3.0-2.0*f);
 
-            vec3 explosion(vec2 uv, vec2 p, float seed, float t) {
-                vec3 col = vec3(0.);
-                vec3 en = hash31(seed);
-                vec3 baseCol = en;
-                
-                for(float i=0.; i<NUM_PARTICLES; i++) {
-                    vec3 n = hash31(i)-.5;
-                    
-                    // pt 控制爆炸進度。優化二次曲線，讓粒子在空中「留滯、減速」的時間更長
-                    float pt = 1.0 - pow(t - 1.0, 2.0);
-                    
-                    // 修正 2：加強物理下墜與大幅拉開擴散半徑（由 0.14 提高到 0.35）
-                    vec2 startP = p - vec2(0., pt * pt * 0.04); 
-                    vec2 endP = startP + normalize(n.xy) * n.z * 0.35; 
-                    vec2 pos = mix(p, endP, pt);    
-                    
-                    // 讓粒子尺寸隨著擴散慢慢變小
-                    float size = mix(.00007, .00001, S(0., .1, pt));
-                    // 修改：拉長淡出的時機點，粒子生命週期後半段依然清晰可見
-                    size *= S(1.0, 0.05, pt);
-                    
-                    // 閃爍特效
-                    float sparkle = (sin((pt+n.z)*60.)*.5+.5);
-                    sparkle = pow(sparkle, 10.) * 0.000015;
-                    size += sparkle*B(en.x, en.y, en.z, t);
-                    
-                    col += baseCol * circ(uv, pos, size);
-                }
-                return col;
-            }
-
-            vec3 Rainbow(vec3 c) {
-                float t = iTime * 1.2;
-                float avg = (c.r+c.g+c.b)/3.;
-                c = avg + (c-avg)*sin(vec3(0., .333, .666)+t);
-                return c;
-            }
-
-            vec2 transformCoordinates(vec2 rawCoord, float screenAspect, float videoAspect) {
-                vec2 uv = vec2(rawCoord.x, 1.0 - rawCoord.y);
-                if (screenAspect < videoAspect) {
-                    float scale = screenAspect / videoAspect;
-                    uv.x = (uv.x - 0.5) * scale + 0.5;
-                } else {
-                    float scale = videoAspect / screenAspect;
-                    uv.y = (uv.y - 0.5) * scale + 0.5;
-                }
-                uv.x -= 0.5;
-                uv.x *= screenAspect;
-                uv.y -= 0.5;
-                return uv;
-            }
-
-            void main() {
-                float screenAspect = iResolution.x / iResolution.y;
-                float videoAspect = u_videoResolution.x / u_videoResolution.y;
-                
-                vec2 camUv = vUv;
-                if (screenAspect < videoAspect) {
-                    float scale = screenAspect / videoAspect;
-                    camUv.x = (vUv.x - 0.5) * scale + 0.5;
-                } else {
-                    float scale = videoAspect / screenAspect;
-                    camUv.y = (vUv.y - 0.5) * scale + 0.5;
-                }
-                
-                vec2 lookupUv = vec2(1.0 - camUv.x, camUv.y);
-                vec3 cameraCol = texture2D(u_cameraTexture, lookupUv).rgb;
-                
-                // --- 修正 1：將相機畫面降低曝光（模擬 -2EV 的暗度） ---
-                // 數學公式：亮度下降 2 檔等於乘以 0.25 (1/2的平方)
-                cameraCol *= 0.25;
-                
-                vec2 uv = gl_FragCoord.xy / iResolution.xy;
-                uv.x -= 0.5;
-                uv.x *= screenAspect;
-                uv.y -= 0.5;
-                
-                vec2 leftEye = transformCoordinates(vec2(1.0 - u_leftEyeRaw.x, u_leftEyeRaw.y), screenAspect, videoAspect);
-                vec2 rightEye = transformCoordinates(vec2(1.0 - u_rightEyeRaw.x, u_rightEyeRaw.y), screenAspect, videoAspect);
-                
-                // --- 修正 2：調慢時間流逝速度（從 1.2 降到 0.5），讓單朵煙火生命週期大幅拉長 ---
-                float t = iTime * 0.5; 
-                vec3 fireworkCol = vec3(0.);
-                
-                if (u_hasFace > 0.5) {
-                    for(float i=0.; i<NUM_EXPLOSIONS; i++) {
-                        float et = t + i * 567.89;
-                        float id = floor(et);
-                        et -= id;
-                        
-                        vec2 targetEye = (mod(i, 2.0) < 1.0) ? leftEye : rightEye;
-                        vec3 offset = hash31(id) - 0.5;
-                        vec2 p = targetEye + offset.xy * 0.015; 
-                        
-                        fireworkCol += explosion(uv, p, id, et);
-                    }
-                }
-                
-                fireworkCol = Rainbow(fireworkCol);
-                fireworkCol = clamp(fireworkCol, 0.0, 1.0);
-                
-                vec3 finalCol = mix(cameraCol, fireworkCol, length(fireworkCol));
-                
-                gl_FragColor = vec4(finalCol, 1.0);
-            }
-        `;
-
-        function initWebGL() {
-            const width = window.innerWidth;
-            const height = window.innerHeight;
-
-            renderer = new THREE.WebGLRenderer({ canvas: canvasElement, antialias: true });
-            renderer.setSize(width, height);
-
-            scene = new THREE.Scene();
-            camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-
-            cameraTexture = new THREE.VideoTexture(videoElement);
-            cameraTexture.minFilter = THREE.LinearFilter;
-            cameraTexture.magFilter = THREE.LinearFilter;
-
-            const uniforms = {
-                u_cameraTexture: { value: cameraTexture },
-                iResolution: { value: new THREE.Vector2(width, height) },
-                u_videoResolution: { value: new THREE.Vector2(1280, 720) }, 
-                iTime: { value: 0 },
-                u_leftEyeRaw: { value: leftEyeRaw },
-                u_rightEyeRaw: { value: rightEyeRaw },
-                u_hasFace: { value: 0.0 }
-            };
-
-            material = new THREE.ShaderMaterial({
-                vertexShader: vertexShader,
-                fragmentShader: fragmentShader,
-                uniforms: uniforms
-            });
-
-            const geometry = new THREE.PlaneGeometry(2, 2);
-            mesh = new THREE.Mesh(geometry, material);
-            scene.add(mesh);
-
-            window.addEventListener('resize', onWindowResize);
-            animate(0);
-        }
-
-        function onWindowResize() {
-            const width = window.innerWidth;
-            const height = window.innerHeight;
-            renderer.setSize(width, height);
-            material.uniforms.iResolution.value.set(width, height);
-        }
-
-        function animate(timestamp) {
-            requestAnimationFrame(animate);
-            material.uniforms.iTime.value = timestamp / 1000.0;
-            material.uniforms.u_leftEyeRaw.value.copy(leftEyeRaw);
-            material.uniforms.u_rightEyeRaw.value.copy(rightEyeRaw);
-            material.uniforms.u_hasFace.value = hasFace ? 1.0 : 0.0;
-            
-            if (videoElement.videoWidth) {
-                material.uniforms.u_videoResolution.value.set(videoElement.videoWidth, videoElement.videoHeight);
-            }
-
-            renderer.render(scene, camera);
-        }
-
-        const faceMesh = new FaceMesh({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
-        });
-
-        faceMesh.setOptions({
-            maxNumFaces: 1,
-            refineLandmarks: true,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
-
-        faceMesh.onResults(results => {
-            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-                hasFace = true;
-                const landmarks = results.multiFaceLandmarks[0];
-                const leftEye = landmarks[468];
-                const rightEye = landmarks[473];
-
-                leftEyeRaw.set(leftEye.x, leftEye.y);
-                rightEyeRaw.set(rightEye.x, rightEye.y);
-            } else {
-                hasFace = false;
-            }
-        });
-
-        const cameraUtils = new Camera(videoElement, {
-            onFrame: async () => {
-                await faceMesh.send({ image: videoElement });
-            },
-            width: 1280,
-            height: 720
-        });
-
-        window.addEventListener('load', () => {
-            initWebGL();
-            cameraUtils.start().catch(err => {
-                console.error("相機啟動失敗：", err);
-            });
-        });
-    </script>
-</body>
-</html>
+                return mix( mix( mix( dot( hash( i + vec3(0.0,0.0,0.0) ), f - vec3(0.0,0.0,0.0) ), 
+                                      dot( hash( i + vec3(1.0,0.0,0.0) ), f - vec3(1.0,0.0,0.0) ), u.x),
+                                 mix( dot( hash( i + vec3(0.0,1.0,0.0) ), f - vec3(0.0,1.0,0.0) ), 
+                                      dot( hash( i + vec3(1.0,1.0,0.0) ), f - vec3(1.0,1.0,0.0) ), u.x), u.y),
