@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>v1.2 stardust</title>
+    <title>v2.0 stardust</title>
     <style>
         body, html {
             margin: 0;
@@ -35,34 +35,40 @@
 </head>
 <body>
 
-    <div id="loading">正在初始化相機與粒子緩衝區...</div>
+    <div id="loading">正在建構斷層記憶記憶體...</div>
     <canvas id="canvas"></canvas>
 
-    <!-- Shader 1: 當前幀的粒子生成 -->
+    <!-- Shader 1: 核心記憶烙印 Shader (只在粒子通過時才准相機進來，否則保留舊記憶) -->
     <script id="fragmentShader" type="x-shader/x-fragment">
         uniform vec2 iResolution;
         uniform float iTime;
-        uniform sampler2D iChannel0;
+        uniform sampler2D iChannel0;    // 即時相機輸入
+        uniform sampler2D textureDelay; // 歷史記憶 Buffer (上一影格)
 
         void main() {
             vec2 fragCoord = gl_FragCoord.xy;
-            float time = (iTime + 100.0) * 25.0;
+            vec2 origUV = fragCoord / iResolution.xy; 
+            
+            // 讀取上一影格留在這裡的永恆顏色
+            vec3 lastMemory = texture2D(textureDelay, origUV).rgb;
+
+            // 算當下的 Kali Loop 粒子結構
+            float time = (iTime + 100.0) * 20.0; // 前進速度
             float s = 0.0;
             
-            vec2 origUV = fragCoord / iResolution.xy; 
-            origUV.x = 1.0 - origUV.x; // 鏡像修正
+            vec2 camUV = origUV;
+            camUV.x = 1.0 - camUV.x; // 鏡像修正
             
             vec2 uv = (-iResolution.xy + 2.0 * fragCoord ) / iResolution.y;
-
             float t = time * 0.005;
             float si = sin(t * 1.5);
             float co = cos(t);
             uv *= mat2(co, si, -si, co);
 
-            vec3 col = vec3(0.0);
+            vec3 currentParticle = vec3(0.0);
             vec3 init = vec3(0.25, 0.25, time * 0.001);
 
-            for (int r = 0; r < 60; r++) {
+            for (int r = 0; r < 50; r++) {
                 vec3 p = init + s * vec3(uv, 0.15);
                 p.z = mod(p.z, 2.0);
                 
@@ -72,37 +78,40 @@
                 
                 float scarcity = 0.4; 
                 float energy = length(p) * scarcity;
-                energy = pow(energy, 3.0); // 調整強度
+                energy = pow(energy, 4.0); // 這裡極其暴力，只有核心極亮的粒子會過關
                 
                 float fade = smoothstep(0.0, 0.5, 1.0 - s);
-                vec3 camCol = texture2D(iChannel0, origUV).rgb;
+                vec3 camCol = texture2D(iChannel0, camUV).rgb;
                 
-                col += camCol * energy * fade * 0.015;
+                currentParticle += camCol * energy * fade * 0.015;
                 s += 0.015;
             }
+            currentParticle = pow(currentParticle, vec3(0.9));
 
-            col = pow(col, vec3(0.9));
-            gl_FragColor = vec4(col, 1.0);
+            // 【核心機制：斷開即時訊號】
+            // 如果當前這個像素位置，Kali 粒子算出來有亮光 (也就是 currentParticle 有值)
+            // 我們才把新顏色「印」到記憶體上；如果此時沒有粒子經過，那對不起，這裡永遠維持上一影格的舊記憶！
+            vec3 finalLog;
+            if (length(currentParticle) > 0.15) {
+                // 當粒子撞擊，蓋上最新的顏色，並跟過去的記憶做最大值融合
+                finalLog = max(currentParticle, lastMemory);
+            } else {
+                // 粒子沒有經過的地方，直接鎖死舊記憶，相機怎麼動都動不到這裡！
+                // 乘以 0.999 讓它有極度緩慢、幾乎看不出來的灰飛煙滅感（沙畫感）
+                finalLog = lastMemory * 0.999;
+            }
+            
+            gl_FragColor = vec4(finalLog, 1.0);
         }
     </script>
 
-    <!-- Shader 2: 記憶混色更新 (更穩定的 Feedback 核心) -->
-    <script id="feedbackFragmentShader" type="x-shader/x-fragment">
+    <!-- Shader 2: 純輸出 Shader (只負責把記憶畫布輸出到螢幕上，不參與任何計算) -->
+    <script id="displayFragmentShader" type="x-shader/x-fragment">
         uniform vec2 iResolution;
-        uniform sampler2D textureCurrent;
-        uniform sampler2D textureDelay;
-        
+        uniform sampler2D textureMemory;
         void main() {
             vec2 uv = gl_FragCoord.xy / iResolution.xy;
-            
-            vec3 current = texture2D(textureCurrent, uv).rgb;
-            vec3 delay = texture2D(textureDelay, uv).rgb;
-            
-            // 採用更平滑的 max 混合與極微量的衰減
-            // 只要現在這一幀有亮光，就疊加進去；舊的記憶則乘以 0.996 緩慢淡出
-            vec3 finalCol = max(current, delay * 0.996);
-            
-            gl_FragColor = vec4(finalCol, 1.0);
+            gl_FragColor = vec4(texture2D(textureMemory, uv).rgb, 1.0);
         }
     </script>
 
@@ -117,14 +126,13 @@
         let video, videoTexture;
         let clock = new THREE.Clock();
         
-        let baseMaterial, baseScene;
-        let blendMaterial, blendScene;
-        let rtA, rtB;
+        let calcScene, calcMaterial;
+        let dispScene, dispMaterial;
+        let rtA, rtB; // Ping-Pong 核心記憶庫
         
-        let uniformsBase, uniformsBlend;
+        let uniformsCalc, uniformsDisp;
         const loadingEl = document.getElementById('loading');
 
-        // 安全取得相機並確保其正在播放
         async function setupCamera() {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 loadingEl.innerText = "你的瀏覽器不支援相機功能";
@@ -135,22 +143,14 @@
                     video: { width: 640, height: 480, facingMode: "user" },
                     audio: false
                 });
-                
                 video = document.createElement('video');
                 video.srcObject = stream;
                 video.autoplay = true;
                 video.playsInline = true;
-                video.muted = true; // 確保部分瀏覽器不會因為音訊政策阻擋播放
-
+                video.muted = true;
                 return new Promise((resolve) => {
-                    // 關鍵修正：確保 timeupdate 事件觸發（代表真的有畫面幀傳進來了）才 resolve
-                    video.addEventListener('timeupdate', () => {
-                        resolve(video);
-                    }, { once: true });
-                    
-                    video.play().catch(err => {
-                        console.error("Video play interrupted:", err);
-                    });
+                    video.addEventListener('timeupdate', () => resolve(video), { once: true });
+                    video.play().catch(err => console.error(err));
                 });
             } catch (err) {
                 loadingEl.innerText = "無法取得相機權限：" + err.message;
@@ -163,51 +163,46 @@
             const w = window.innerWidth;
             const h = window.innerHeight;
             
-            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: false }); // 關閉抗鋸齒提升效能
+            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: false });
             renderer.setSize(w, h);
             
             camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-            
-            // 建立相機紋理，設定正確的過濾引數
             videoTexture = new THREE.VideoTexture(videoElement);
-            videoTexture.minFilter = THREE.LinearFilter;
-            videoTexture.magFilter = THREE.LinearFilter;
 
-            // 建立雙緩衝
+            // 建立高精度的雙緩衝記憶庫
             rtA = new THREE.WebGLRenderTarget(w, h);
             rtB = new THREE.WebGLRenderTarget(w, h);
 
-            // 1. 粒子生成舞台
-            baseScene = new THREE.Scene();
-            uniformsBase = {
+            // 舞台 1: 記憶烙印與運算
+            calcScene = new THREE.Scene();
+            uniformsCalc = {
                 iTime: { value: 0 },
                 iResolution: { value: new THREE.Vector2(w, h) },
-                iChannel0: { value: videoTexture }
+                iChannel0: { value: videoTexture },
+                textureDelay: { value: null } // 讀取上一幀
             };
-            baseMaterial = new THREE.ShaderMaterial({
+            calcMaterial = new THREE.ShaderMaterial({
                 vertexShader: document.getElementById('vertexShader').textContent,
                 fragmentShader: document.getElementById('fragmentShader').textContent,
-                uniforms: uniformsBase
+                uniforms: uniformsCalc
             });
-            const baseMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), baseMaterial);
-            baseScene.add(baseMesh);
+            const calcMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), calcMaterial);
+            calcScene.add(calcMesh);
 
-            // 2. 記憶混合舞台
-            blendScene = new THREE.Scene();
-            uniformsBlend = {
+            // 舞台 2: 純顯示
+            dispScene = new THREE.Scene();
+            uniformsDisp = {
                 iResolution: { value: new THREE.Vector2(w, h) },
-                textureCurrent: { value: null },
-                textureDelay: { value: null }
+                textureMemory: { value: null }
             };
-            blendMaterial = new THREE.ShaderMaterial({
+            dispMaterial = new THREE.ShaderMaterial({
                 vertexShader: document.getElementById('vertexShader').textContent,
-                fragmentShader: document.getElementById('feedbackFragmentShader').textContent,
-                uniforms: uniformsBlend
+                fragmentShader: document.getElementById('displayFragmentShader').textContent,
+                uniforms: uniformsDisp
             });
-            const blendMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), blendMaterial);
-            blendScene.add(blendMesh);
+            const dispMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), dispMaterial);
+            dispScene.add(dispMesh);
 
-            // 成功載入，隱藏 Loading
             loadingEl.style.opacity = 0;
             setTimeout(() => loadingEl.remove(), 500);
 
@@ -220,31 +215,31 @@
             renderer.setSize(w, h);
             rtA.setSize(w, h);
             rtB.setSize(w, h);
-            uniformsBase.iResolution.value.set(w, h);
-            uniformsBlend.iResolution.value.set(w, h);
+            uniformsCalc.iResolution.value.set(w, h);
+            uniformsDisp.iResolution.value.set(w, h);
         }
 
         function animate() {
             requestAnimationFrame(animate);
             
-            const time = clock.getElapsedTime();
-            uniformsBase.iTime.value = time;
+            uniformsCalc.iTime.value = clock.getElapsedTime();
             
-            // Step 1: 算出這一幀的粒子 -> 渲染到 rtA
+            // 【硬派 Ping-Pong 管線】
+            // 1. 把「上一幀的歷史記憶 rtB」餵給運算 Shader，結合「新相機訊號」，把結果畫進「新記憶 rtA」裡
+            uniformsCalc.textureDelay.value = rtB.texture;
             renderer.setRenderTarget(rtA);
-            renderer.render(baseScene, camera);
+            renderer.render(calcScene, camera);
             
-            // Step 2: 把這幀粒子(rtA)和過去記憶(rtB)混合 -> 渲染到畫面上給人看
-            uniformsBlend.textureCurrent.value = rtA.texture;
-            uniformsBlend.textureDelay.value = rtB.texture;
-            
+            // 2. 把剛剛算好、新鮮熱騰騰的記憶 rtA，拿給顯示舞台，真正輸出到螢幕上給你看
+            uniformsDisp.textureMemory.value = rtA.texture;
             renderer.setRenderTarget(null);
-            renderer.render(blendScene, camera);
+            renderer.render(dispScene, camera);
             
-            // Step 3: 把剛剛畫好的完美畫面 -> 複製一份存到 rtB，變成下一幀的「過去記憶」
-            renderer.setRenderTarget(rtB);
-            renderer.render(blendScene, camera);
-            renderer.setRenderTarget(null);
+            // 3. 【關鍵置換】把 rtA 複製給 rtB，讓 rtB 成為下一影格的歷史。
+            // 這樣記憶就徹底與這影格的即時相機訊號切斷了！
+            let temp = rtA;
+            rtA = rtB;
+            rtB = temp;
         }
 
         async function main() {
