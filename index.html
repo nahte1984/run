@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v3.2</title>
+    <title>whenever i see u | v3.3</title>
     <style>
         body {
             margin: 0;
@@ -191,8 +191,8 @@
                 vec3 stars_direction = normalize(vec3((starUv * 2.0 - 1.0) * vec2(screenAspect, 1.0), 1.0)); 
                 
                 // [修改 2] 星空數量減半 (門檻 8.0 -> 15.0)，星空亮度減半 (曝光 200.0 -> 100.0)
-                float stars_threshold = 11.0; 
-                float stars_exposure = 150.0; 
+                float stars_threshold = 9.0; 
+                float stars_exposure = 175.0; 
                 
                 float stars = pow(clamp(noise(stars_direction * 200.0), 0.0, 1.0), stars_threshold) * stars_exposure;
                 stars *= mix(0.4, 1.4, noise(stars_direction * 100.0 + vec3(iTime)));
