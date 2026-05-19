@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>互動眼睛煙火特效 - 粒粒分明修正版</title>
+    <title>互動眼睛煙火特效 - 完美對位版</title>
     <style>
         body {
             margin: 0;
@@ -14,6 +14,7 @@
             justify-content: center;
             align-items: center;
             height: 100vh;
+            width: 100vw;
         }
 
         #webgl-canvas {
@@ -34,7 +35,7 @@
             object-fit: cover;
             z-index: 1;
             transform: scaleX(-1);
-            display: none; /* 完全交由 WebGL 繪製底圖 */
+            display: none; /* 完全由 WebGL 渲染，確保底圖與特效同步缩放 */
         }
     </style>
 
@@ -56,6 +57,10 @@
         let rightEyePos = new THREE.Vector2(-999.0, -999.0);
         let hasFace = false;
 
+        // 相機捕捉的原始解析度，稍後會動態更新
+        let videoWidth = 1280;
+        let videoHeight = 720;
+
         const vertexShader = `
             varying vec2 vUv;
             void main() {
@@ -67,18 +72,17 @@
         const fragmentShader = `
             uniform sampler2D u_cameraTexture; 
             uniform vec2 iResolution;
+            uniform vec2 u_videoResolution;
             uniform float iTime;
             uniform vec2 u_leftEye;   
             uniform vec2 u_rightEye;  
             uniform float u_hasFace;  
             varying vec2 vUv;
 
-            #define PI 3.141592653589793238
             #define S(x,y,z) smoothstep(x,y,z)
             #define B(x,y,z,w) S(x-z, x+z, w)*S(y+z, y-z, w)
             #define saturate(x) clamp(x,0.,1.)
 
-            // 調少粒子量與爆炸數量，讓畫面更乾淨精緻
             #define NUM_EXPLOSIONS 4.
             #define NUM_PARTICLES 45.
 
@@ -89,12 +93,9 @@
                return fract(vec3((p3.x + p3.y)*p3.z, (p3.x+p3.z)*p3.y, (p3.y+p3.z)*p3.x));
             }
 
-            // 核心修改：改用實心圓函數，確保粒子粒粒分明，絕不過曝！
             float circ(vec2 uv, vec2 pos, float size) {
                 uv -= pos;
-                float d = dot(uv, uv);
-                // 建立一個清晰邊緣的小圓點
-                return S(size * 1.2, size, d);
+                return S(size * 1.2, size, dot(uv, uv));
             }
 
             vec3 explosion(vec2 uv, vec2 p, float seed, float t) {
@@ -104,50 +105,59 @@
                 
                 for(float i=0.; i<NUM_PARTICLES; i++) {
                     vec3 n = hash31(i)-.5;
-                    
-                    // 粒子動畫計時
                     float pt = 1.-pow(t-1., 2.);
                     
-                    // 讓重力往下墜的效果更明顯，且緊跟著眼睛
-                    vec2 startP = p - vec2(0., pt*pt*.03); 
-                    vec2 endP = startP + normalize(n.xy)*n.z*0.18; // 縮小爆炸半徑
-                    
+                    vec2 startP = p - vec2(0., pt*pt*.02); 
+                    vec2 endP = startP + normalize(n.xy)*n.z*0.15; 
                     vec2 pos = mix(p, endP, pt);    
                     
-                    // 計算清晰圓點的大小
-                    float size = mix(.0001, .00003, S(0., .1, pt));
+                    float size = mix(.00008, .00002, S(0., .1, pt));
                     size *= S(1., .2, pt);
                     
-                    // 閃爍特效
                     float sparkle = (sin((pt+n.z)*80.)*.5+.5);
                     sparkle = pow(sparkle, 10.) * 0.00002;
                     size += sparkle*B(en.x, en.y, en.z, t);
                     
-                    // 使用 circ 畫出粒粒分明的光點，並將顏色疊加
-                    float pShape = circ(uv, pos, size);
-                    col += baseCol * pShape;
+                    col += baseCol * circ(uv, pos, size);
                 }
                 return col;
             }
 
             vec3 Rainbow(vec3 c) {
-                float t=iTime * 1.5;
+                float t = iTime * 1.5;
                 float avg = (c.r+c.g+c.b)/3.;
                 c = avg + (c-avg)*sin(vec3(0., .333, .666)+t);
                 return c;
             }
 
             void main() {
-                // 讀取相機背景
-                vec2 camUv = vec2(1.0 - vUv.x, vUv.y);
+                // --- 修正底圖的 Object-Fit: Cover 裁切邏輯 ---
+                vec2 screenUV = gl_FragCoord.xy / iResolution.xy;
+                
+                float screenAspect = iResolution.x / iResolution.y;
+                float videoAspect = u_videoResolution.x / u_videoResolution.y;
+                
+                vec2 camUv = vUv;
+                if (screenAspect < videoAspect) {
+                    // 螢幕比相機窄 (例如手機直向螢幕)
+                    float scale = screenAspect / videoAspect;
+                    camUv.x = (vUv.x - 0.5) * scale + 0.5;
+                } else {
+                    // 螢幕比相機寬
+                    float scale = videoAspect / screenAspect;
+                    camUv.y = (vUv.y - 0.5) * scale + 0.5;
+                }
+                
+                // 修正鏡像
+                camUv.x = 1.0 - camUv.x;
                 vec3 cameraCol = texture2D(u_cameraTexture, camUv).rgb;
                 
-                // 換算 WebGL 渲染座標
-                vec2 uv = gl_FragCoord.xy / iResolution.xy;
-                uv.x -= .5;
-                uv.x *= iResolution.x/iResolution.y;
+                // --- Shader 粒子座標系統 ---
+                vec2 uv = screenUV;
+                uv.x -= 0.5;
+                uv.x *= screenAspect;
                 
-                float t = iTime * 1.2; // 煙火施放速度
+                float t = iTime * 1.2; 
                 vec3 fireworkCol = vec3(0.);
                 
                 if (u_hasFace > 0.5) {
@@ -156,24 +166,18 @@
                         float id = floor(et);
                         et -= id;
                         
-                        // 左右眼輪流發射
                         vec2 targetEye = (mod(i, 2.0) < 1.0) ? u_leftEye : u_rightEye;
-                        
-                        // 讓煙火稍微在眼睛周圍微幅錯開
                         vec3 offset = hash31(id) - 0.5;
-                        vec2 p = targetEye + offset.xy * 0.02; 
+                        vec2 p = targetEye + offset.xy * 0.015; 
                         
                         fireworkCol += explosion(uv, p, id, et);
                     }
                 }
                 
-                // 套用彩虹變色
                 fireworkCol = Rainbow(fireworkCol);
-                
-                // 限制煙火顏色範圍，確保粒粒分明的個體色彩
                 fireworkCol = clamp(fireworkCol, 0.0, 1.0);
                 
-                // 正常的 Alpha 蓋色混合，完全不會有加法造成的死白過曝問題
+                // Alpha 覆蓋混合，不產生光害過曝
                 vec3 finalCol = mix(cameraCol, fireworkCol, length(fireworkCol));
                 
                 gl_FragColor = vec4(finalCol, 1.0);
@@ -197,6 +201,7 @@
             const uniforms = {
                 u_cameraTexture: { value: cameraTexture },
                 iResolution: { value: new THREE.Vector2(width, height) },
+                u_videoResolution: { value: new THREE.Vector2(videoWidth, videoHeight) },
                 iTime: { value: 0 },
                 u_leftEye: { value: leftEyePos },
                 u_rightEye: { value: rightEyePos },
@@ -230,11 +235,12 @@
             material.uniforms.u_leftEye.value.copy(leftEyePos);
             material.uniforms.u_rightEye.value.copy(rightEyePos);
             material.uniforms.u_hasFace.value = hasFace ? 1.0 : 0.0;
+            material.uniforms.u_videoResolution.value.set(videoWidth, videoHeight);
 
             renderer.render(scene, camera);
         }
 
-        // --- 重新優化直向手機的座標對齊演算法 ---
+        // --- 精確演算法：同步模擬 CSS Object-Fit: Cover 的座標轉換 ---
         const faceMesh = new FaceMesh({
             locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
         });
@@ -251,22 +257,41 @@
                 hasFace = true;
                 const landmarks = results.multiFaceLandmarks[0];
 
-                // 取得瞳孔精確特徵點
                 const leftEye = landmarks[468];
                 const rightEye = landmarks[473];
 
-                const screenAspect = window.innerWidth / window.innerHeight;
-
-                // 修正：針對手機 Safari / Chrome 直向網頁（object-fit: cover）的精確對齊轉換
-                // 1. 先做鏡像反轉，並將 0~1 轉換到 -0.5 ~ 0.5 區間
-                // 2. 將 Y 軸的方向反轉 (MediaPipe 往下為正，WebGL 往上為正)
-                // 3. 乘上對應的長寬比調整，達成完美貼合
+                const screenWidth = window.innerWidth;
+                const screenHeight = window.innerHeight;
                 
-                leftEyePos.x = ((1.0 - leftEye.x) - 0.5) * screenAspect;
-                leftEyePos.y = (0.5 - leftEye.y);
+                // 1. 計算視訊與螢幕的縮放比例 (模擬 object-fit: cover)
+                const scaleX = screenWidth / videoWidth;
+                const scaleY = screenHeight / videoHeight;
+                const renderScale = Math.max(scaleX, scaleY);
 
-                rightEyePos.x = ((1.0 - rightEye.x) - 0.5) * screenAspect;
-                rightEyePos.y = (0.5 - rightEye.y);
+                // 2. 計算視訊被放大後的實際渲染尺寸
+                const vRenderWidth = videoWidth * renderScale;
+                const vRenderHeight = videoHeight * renderScale;
+
+                // 3. 計算因為置中對齊產生的裁切偏移量量 (Pixels)
+                const offsetX = (vRenderWidth - screenWidth) / 2;
+                const offsetY = (vRenderHeight - screenHeight) / 2;
+
+                // 4. 將 MediaPipe 的 0~1 轉換成「放大後的視訊絕對像素座標」
+                // 注意：因為 MediaPipe 拿到的視訊通常是橫向的（1280x720），手機直持時會自動旋轉，所以它的 x, y 要對應好
+                const lxPix = (1.0 - leftEye.x) * vRenderWidth - offsetX;
+                const lyPix = leftEye.y * vRenderHeight - offsetY;
+
+                const rxPix = (1.0 - rightEye.x) * vRenderWidth - offsetX;
+                const ryPix = rightEye.y * vRenderHeight - offsetY;
+
+                // 5. 將像素座標完美對齊到 WebGL Shader 的 UV 座標系統內 (-Aspect/2 ~ +Aspect/2)
+                const screenAspect = screenWidth / screenHeight;
+
+                leftEyePos.x = (lxPix / screenWidth - 0.5) * screenAspect;
+                leftEyePos.y = 0.5 - (lyPix / screenHeight);
+
+                rightEyePos.x = (rxPix / screenWidth - 0.5) * screenAspect;
+                rightEyePos.y = 0.5 - (ryPix / screenHeight);
 
             } else {
                 hasFace = false;
@@ -275,6 +300,11 @@
 
         const cameraUtils = new Camera(videoElement, {
             onFrame: async () => {
+                // 當相機成功啟動後，獲取實際輸出的解析度（通常為 1280x720 或手機直向時的 720x1280）
+                if (videoElement.videoWidth && videoElement.videoWidth !== videoWidth) {
+                    videoWidth = videoElement.videoWidth;
+                    videoHeight = videoElement.videoHeight;
+                }
                 await faceMesh.send({ image: videoElement });
             },
             width: 1280,
@@ -284,7 +314,7 @@
         window.addEventListener('load', () => {
             initWebGL();
             cameraUtils.start().catch(err => {
-                console.error(err);
+                console.error("無法啟動相機：", err);
             });
         });
     </script>
