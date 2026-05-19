@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v8.0 (Background Fireworks & Heart Eyes)</title>
+    <title>whenever i see u | v9.0 (Focus Heart Edition)</title>
     <style>
         body {
             margin: 0;
@@ -78,35 +78,16 @@
             #define PI      3.141592653589793
             #define TWO_PI  6.283185307179586
 
-            // --- 背景星空的雜訊與隨機函數 ---
-            vec3 hash( vec3 p ) {
-                p = vec3( dot(p,vec3(127.1,311.7, 74.7)),
-                          dot(p,vec3(269.5,183.3,246.1)),
-                          dot(p,vec3(113.5,271.9,124.6)));
-                return -1.0 + 2.0*fract(sin(p)*43758.5453123);
-            }
-
-            float noise( in vec3 p ) {
-                vec3 i = floor( p );
-                vec3 f = fract( p );
-                vec3 u = f*f*(3.0-2.0*f);
-                return mix( mix( mix( dot( hash( i + vec3(0.0,0.0,0.0) ), f - vec3(0.0,0.0,0.0) ), 
-                                      dot( hash( i + vec3(1.0,0.0,0.0) ), f - vec3(1.0,0.0,0.0) ), u.x),
-                                 mix( dot( hash( i + vec3(0.0,1.0,0.0) ), f - vec3(0.0,1.0,0.0) ), 
-                                      dot( hash( i + vec3(1.0,1.0,0.0) ), f - vec3(1.0,1.0,0.0) ), u.x), u.y),
-                            mix( mix( dot( hash( i + vec3(0.0,0.0,1.0) ), f - vec3(0.0,0.0,1.0) ), 
-                                      dot( hash( i + vec3(1.0,0.0,1.0) ), f - vec3(1.0,0.0,1.0) ), u.x),
-                                 mix( dot( hash( i + vec3(0.0,1.0,1.0) ), f - vec3(0.0,1.0,1.0) ), 
-                                      dot( hash( i + vec3(1.0,1.0,1.0) ), f - vec3(1.0,1.0,1.0) ), u.x), u.y), u.z );
-            }
-
             // ==========================================
-            // 背景煙火設定 (Background Fireworks)
+            // 背景煙火設定 (稀疏點綴版)
             // ==========================================
             #define Gravitational_ACCE vec2(0.0, -0.2)
-            #define NUM_SPARKS 30
-            #define NUM_FIREWORKS 5
-            #define Period 5.0
+            // 粒子數量砍半
+            #define NUM_SPARKS 15
+            // 同時出現的煙火數量減少
+            #define NUM_FIREWORKS 3
+            // 發射週期拉長
+            #define Period 8.0
 
             float rand(float co) { 
                 return fract(sin(co*(91.3458)) * 47453.5453);
@@ -117,7 +98,6 @@
                 vec2 sparkPos = origin + displacement;
                 float len = length(coord - sparkPos);
                 
-                // 修正 smoothstep 在 WebGL 1.0 的安全寫法 (從小到大)
                 vec3 color = sparkColor * pow(1.0 - smoothstep(0.001, 0.05, len), 8.0);
                 color += vec3(1.0) * (1.0 - smoothstep(0.001, 0.005, len));
                 color *= (1.0 - smoothstep(0.0, Period, periodTime));
@@ -131,7 +111,6 @@
                 origin.y = (0.4 + 0.4*rand(currentPeriod));
 
                 vec3 color = vec3(0.0);
-                // 改用標準的整數迴圈，確保跨裝置支援性
                 for(int i=0; i < NUM_SPARKS; i++) {
                     float fi = float(i);
                     vec2 velocity;
@@ -241,7 +220,7 @@
                 float distFromCenter = length(dirFromCenter);
 
                 // ==========================================
-                // 1. 相機底圖處理 (保留5倍放射狀模糊)
+                // 1. 相機底圖處理 (保留放射狀模糊)
                 // ==========================================
                 vec3 cameraCol = vec3(0.0);
                 float blurStrength = smoothstep(0.2, 0.8, distFromCenter) * 0.40; 
@@ -265,27 +244,13 @@
                 }
                 cameraCol /= float(SAMPLES);
                 
-                // 相機畫面壓暗
+                // 相機畫面壓暗，凸顯煙火高光
                 cameraCol *= 0.55;
                 
-                // ==========================================
-                // 2. 融入背景點綴星空
-                // ==========================================
-                vec2 starUv = gl_FragCoord.xy / iResolution.xy;
-                vec3 stars_direction = normalize(vec3((starUv * 2.0 - 1.0) * vec2(screenAspect, 1.0), 1.0)); 
-                
-                float stars_threshold = 9.0; 
-                float stars_exposure = 175.0; 
-                float stars = pow(clamp(noise(stars_direction * 200.0), 0.0, 1.0), stars_threshold) * stars_exposure;
-                stars *= mix(0.4, 1.4, noise(stars_direction * 100.0 + vec3(iTime)));
-                
-                float starFocus = smoothstep(0.9, 0.3, distFromCenter);
-                stars *= starFocus;
-
-                vec3 finalCol = clamp(cameraCol + vec3(stars), 0.0, 1.0);
+                vec3 finalCol = cameraCol;
 
                 // ==========================================
-                // 3. 融入背景煙火 (去除藍色背景，保留疊加)
+                // 2. 融入背景煙火 (降低頻率與數量)
                 // ==========================================
                 vec2 fwCoord = gl_FragCoord.xy / iResolution.y;
                 vec3 fwColor = vec3(0.0);
@@ -304,7 +269,7 @@
                 finalCol = clamp(finalCol + fwColor, 0.0, 1.0);
 
                 // ==========================================
-                // 4. 愛心煙火噴發特效
+                // 3. 愛心煙火噴發特效 (視覺焦點)
                 // ==========================================
                 vec2 uv = gl_FragCoord.xy / iResolution.xy;
                 uv.x -= 0.5;
@@ -327,7 +292,7 @@
                 finalCol = clamp(finalCol + eyeFX, 0.0, 1.0);
                 
                 // ==========================================
-                // 5. 全局畫面暗角 (Vignette)
+                // 4. 全局畫面暗角 (Vignette)
                 // ==========================================
                 float vignette = smoothstep(0.75, 0.25, distFromCenter);
                 finalCol *= mix(0.3, 1.0, vignette);
