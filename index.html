@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v4.2 (Radial Blur & Galaxy Eyes)</title>
+    <title>whenever i see u | v5.0 (Kali's Chaos Galaxy)</title>
     <style>
         body {
             margin: 0;
@@ -75,6 +75,12 @@
             uniform float u_hasFace;  
             varying vec2 vUv;
 
+            // WebGL 1.0 沒有內建 tanh，手動實作以還原色彩壓制效果
+            vec3 my_tanh(vec3 x) {
+                vec3 e2x = exp(2.0 * x);
+                return (e2x - 1.0) / (e2x + 1.0);
+            }
+
             // --- 背景星空的雜訊與隨機函數 ---
             vec3 hash( vec3 p ) {
                 p = vec3( dot(p,vec3(127.1,311.7, 74.7)),
@@ -97,38 +103,46 @@
                                       dot( hash( i + vec3(1.0,1.0,1.0) ), f - vec3(1.0,1.0,1.0) ), u.x), u.y), u.z );
             }
 
-            // --- 眼睛噴發星系的函數 (加入了時間差與旋轉方向參數) ---
+            // --- Kali's Chaos 星雲噴發函數 ---
             vec3 renderGalaxy(vec2 uv, vec2 center, float timeOffset, float swirlDir) {
                 float dist = length(uv - center);
                 float maxRadius = 0.35; 
                 
                 if (dist > maxRadius) return vec3(0.0);
 
-                vec2 local_uv = (uv - center) * 4.0; 
+                // 將座標系統重置到眼睛，並放大以適應星雲細節
+                vec2 local_uv = (uv - center) * 5.0; 
                 
-                float time = (iTime + 29.0 + timeOffset) * 60.0;
-                float s = 0.0, v = 0.0;
+                // 加入時間與相位差
+                float time = (iTime - 2.0 + timeOffset) * 58.0;
+                
+                // 保留旋轉變形效果
                 float t = time * 0.005;
-                
                 local_uv.x += sin(t) * 0.3;
                 float si = sin(t * 1.5) * swirlDir; 
                 float co = cos(t);
                 local_uv *= mat2(co, si, -si, co);
                 
+                float s = 0.0, v = 0.0;
                 vec3 col = vec3(0.0);
-                vec3 init = vec3(0.25, 0.25 + sin(time * 0.001) * 0.1, time * 0.0008);
+                vec3 init = vec3(sin(time * 0.0032) * 0.3, 0.35 - cos(time * 0.005) * 0.3, time * 0.002);
                 
-                for (int r = 0; r < 70; r++) { 
-                    vec3 p = init + s * vec3(local_uv, 0.143);
-                    p.z = mod(p.z, 2.0);
-                    for (int i = 0; i < 9; i++) {
-                        p = abs(p * 2.04) / dot(p, p) - 0.75;
+                // 核心碎形演算法 (r 上限稍微壓在 75 確保行動端流暢度)
+                for (int r = 0; r < 75; r++) { 
+                    vec3 p = init + s * vec3(local_uv, 0.05);
+                    p.z = fract(p.z);
+                    for (int i = 0; i < 10; i++) {
+                        p = abs(p * 2.04) / dot(p, p) - 0.9;
                     }
-                    v += length(p * p) * smoothstep(0.0, 0.5, 0.9 - s) * 0.002;
-                    col += vec3(v * 0.8, 1.1 - s * 0.5, 0.7 + v * 0.5) * v * 0.013;
-                    s += 0.01;
+                    v += pow(dot(p, p), 0.7) * 0.06;
+                    col += vec3(v * 0.2 + 0.4, 12.0 - s * 2.0, 0.1 + v * 1.0) * v * 0.00003;
+                    s += 0.025;
                 }
                 
+                // 套用自定義的 tanh 來壓制過曝的高光
+                col = my_tanh(col);
+                
+                // 圓形平滑遮罩，讓邊緣自然消散
                 float mask = smoothstep(maxRadius, maxRadius * 0.2, dist);
                 return col * mask;
             }
@@ -153,24 +167,22 @@
                 float screenAspect = iResolution.x / iResolution.y;
                 float videoAspect = u_videoResolution.x / u_videoResolution.y;
                 
-                // 計算當前像素到螢幕中心的距離，用於放射狀模糊與暗角
                 vec2 screenCenter = vec2(0.5, 0.5);
                 vec2 dirFromCenter = vUv - screenCenter;
                 float distFromCenter = length(dirFromCenter);
 
-                // --- 1. 相機底圖處理 (加入放射狀模糊 Radial Blur) ---
+                // --- 1. 相機底圖處理 (加強 5 倍的放射狀模糊) ---
                 vec3 cameraCol = vec3(0.0);
                 
-                // 控制邊緣模糊的強度：距離中心 0.2 以內完全清晰，越到邊緣(0.8)越模糊
-                float blurStrength = smoothstep(0.2, 0.8, distFromCenter) * 0.08; 
+                // 模糊強度直接乘上 0.40 (原本 0.08 的五倍)
+                float blurStrength = smoothstep(0.2, 0.8, distFromCenter) * 0.40; 
                 
-                // 進行 12 次採樣產生殘影模糊感
-                for (int i = 0; i < 12; i++) {
-                    // 計算每次採樣的偏移量 (從 -0.5 到 0.5 的區間)
-                    float t = (float(i) / 11.0) - 0.5;
-                    vec2 sampleUV = vUv + dirFromCenter * (t * blurStrength);
+                // 為了適應極端的拉伸，將採樣次數從 12 提升至 24，避免嚴重斷層
+                const int SAMPLES = 24;
+                for (int i = 0; i < SAMPLES; i++) {
+                    float t_blur = (float(i) / float(SAMPLES - 1)) - 0.5;
+                    vec2 sampleUV = vUv + dirFromCenter * (t_blur * blurStrength);
                     
-                    // 將偏移後的 UV 進行 Object-Fit: Cover 的比例校正
                     vec2 camUv = sampleUV;
                     if (screenAspect < videoAspect) {
                         float scale = screenAspect / videoAspect;
@@ -183,10 +195,9 @@
                     vec2 lookupUv = vec2(1.0 - camUv.x, camUv.y);
                     cameraCol += texture2D(u_cameraTexture, lookupUv).rgb;
                 }
-                // 平均採樣結果
-                cameraCol /= 12.0;
+                cameraCol /= float(SAMPLES);
                 
-                // 將相機畫面微壓暗
+                // 相機畫面壓暗
                 cameraCol *= 0.55;
                 
                 // --- 2. 融入背景點綴星空 ---
@@ -198,13 +209,12 @@
                 float stars = pow(clamp(noise(stars_direction * 200.0), 0.0, 1.0), stars_threshold) * stars_exposure;
                 stars *= mix(0.4, 1.4, noise(stars_direction * 100.0 + vec3(iTime)));
                 
-                // 讓邊緣的星星稍微淡出，配合放射狀模糊的景深感
                 float starFocus = smoothstep(0.9, 0.3, distFromCenter);
                 stars *= starFocus;
 
                 vec3 finalCol = clamp(cameraCol + vec3(stars), 0.0, 1.0);
 
-                // --- 3. 雙眼星雲噴發特效 ---
+                // --- 3. 雙眼 Kali's Chaos 星雲噴發特效 ---
                 vec2 uv = gl_FragCoord.xy / iResolution.xy;
                 uv.x -= 0.5;
                 uv.x *= screenAspect;
@@ -219,13 +229,11 @@
                     eyeGalaxyFX += renderGalaxy(uv, rightEye, 50.0, -1.0);
                 }
                 
-                // 將星系特效以發光(Additive)模式疊加上去
+                // 以 Additive Blending 將星系疊加上去
                 finalCol = clamp(finalCol + eyeGalaxyFX, 0.0, 1.0);
                 
                 // --- 4. 畫面暗角 (Vignette) ---
-                // 利用 smoothstep 創造柔和的衰減：離中心 0.25 開始變暗，到了 0.75 最暗
                 float vignette = smoothstep(0.75, 0.25, distFromCenter);
-                // 將暗角應用到最終畫面上，邊緣亮度壓暗至 30%
                 finalCol *= mix(0.3, 1.0, vignette);
 
                 gl_FragColor = vec4(finalCol, 1.0);
