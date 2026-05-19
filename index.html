@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v6.1</title>
+    <title>whenever i see u | v7.0 (Fire Background & Heart Eyes)</title>
     <style>
         body {
             margin: 0;
@@ -78,29 +78,142 @@
             #define PI      3.141592653589793
             #define TWO_PI  6.283185307179586
 
-            // --- 背景星空的雜訊與隨機函數 ---
-            vec3 hash( vec3 p ) {
-                p = vec3( dot(p,vec3(127.1,311.7, 74.7)),
-                          dot(p,vec3(269.5,183.3,246.1)),
-                          dot(p,vec3(113.5,271.9,124.6)));
-                return -1.0 + 2.0*fract(sin(p)*43758.5453123);
+            // ==========================================
+            // 火焰背景設定 (Fire Background Parameters)
+            // ==========================================
+            #define ANIMATION_SPEED 1.5
+            #define MOVEMENT_SPEED 1.0
+            #define MOVEMENT_DIRECTION vec2(0.7, -1.0)
+            #define PARTICLE_SIZE 0.009
+            #define PARTICLE_SCALE (vec2(0.5, 1.6))
+            #define PARTICLE_SCALE_VAR (vec2(0.25, 0.2))
+            #define PARTICLE_BLOOM_SCALE (vec2(0.5, 0.8))
+            #define PARTICLE_BLOOM_SCALE_VAR (vec2(0.3, 0.1))
+            #define SPARK_COLOR vec3(1.0, 0.4, 0.05) * 1.5
+            #define BLOOM_COLOR vec3(1.0, 0.4, 0.05) * 0.8
+            #define SMOKE_COLOR vec3(1.0, 0.43, 0.1) * 0.8
+            #define SIZE_MOD 1.05
+            #define ALPHA_MOD 0.9
+            #define LAYERS_COUNT 15
+
+            // --- 火焰所需的 Hash 與 Noise 演算法 (已為你補齊) ---
+            float hash1_2(in vec2 p) {
+                vec3 p3  = fract(vec3(p.xyx) * .1031);
+                p3 += dot(p3, p3.yzx + 33.33);
+                return fract((p3.x + p3.y) * p3.z);
             }
 
-            float noise( in vec3 p ) {
-                vec3 i = floor( p );
-                vec3 f = fract( p );
-                vec3 u = f*f*(3.0-2.0*f);
-                return mix( mix( mix( dot( hash( i + vec3(0.0,0.0,0.0) ), f - vec3(0.0,0.0,0.0) ), 
-                                      dot( hash( i + vec3(1.0,0.0,0.0) ), f - vec3(1.0,0.0,0.0) ), u.x),
-                                 mix( dot( hash( i + vec3(0.0,1.0,0.0) ), f - vec3(0.0,1.0,0.0) ), 
-                                      dot( hash( i + vec3(1.0,1.0,0.0) ), f - vec3(1.0,1.0,0.0) ), u.x), u.y),
-                            mix( mix( dot( hash( i + vec3(0.0,0.0,1.0) ), f - vec3(0.0,0.0,1.0) ), 
-                                      dot( hash( i + vec3(1.0,0.0,1.0) ), f - vec3(1.0,0.0,1.0) ), u.x),
-                                 mix( dot( hash( i + vec3(0.0,1.0,1.0) ), f - vec3(0.0,1.0,1.0) ), 
-                                      dot( hash( i + vec3(1.0,1.0,1.0) ), f - vec3(1.0,1.0,1.0) ), u.x), u.y), u.z );
+            vec2 hash2_2(vec2 p) {
+                vec3 p3 = fract(vec3(p.xyx) * vec3(.1031, .1030, .0973));
+                p3 += dot(p3, p3.yzx+33.33);
+                return fract((p3.xx+p3.yz)*p3.zy);
             }
 
-            // --- 愛心煙火專用函數群 ---
+            float noise1_2(vec2 p) {
+                vec2 i = floor(p);
+                vec2 f = fract(p);
+                vec2 u = f*f*(3.0-2.0*f);
+                return mix(mix(hash1_2(i + vec2(0.0,0.0)), hash1_2(i + vec2(1.0,0.0)), u.x),
+                           mix(hash1_2(i + vec2(0.0,1.0)), hash1_2(i + vec2(1.0,1.0)), u.x), u.y);
+            }
+
+            vec2 noise2_2(vec2 p) {
+                vec2 i = floor(p);
+                vec2 f = fract(p);
+                vec2 u = f*f*(3.0-2.0*f);
+                return mix(mix(hash2_2(i + vec2(0.0,0.0)), hash2_2(i + vec2(1.0,0.0)), u.x),
+                           mix(hash2_2(i + vec2(0.0,1.0)), hash2_2(i + vec2(1.0,1.0)), u.x), u.y);
+            }
+
+            // --- 火焰粒子渲染 ---
+            float layeredNoise1_2(in vec2 uv, in float sizeMod, in float alphaMod, in int layers, in float animation) {
+                float noise = 0.0;
+                float alpha = 1.0;
+                float size = 1.0;
+                vec2 offset = vec2(0.0);
+                for (int i = 0; i < 15; i++) {
+                    if(i >= layers) break; // WebGL 相容性寫法
+                    offset += hash2_2(vec2(alpha, size)) * 10.0;
+                    noise += noise1_2(uv * size + iTime * animation * 8.0 * MOVEMENT_DIRECTION * MOVEMENT_SPEED + offset) * alpha;
+                    alpha *= alphaMod;
+                    size *= sizeMod;
+                }
+                noise *= (1.0 - alphaMod)/(1.0 - pow(alphaMod, float(layers)));
+                return noise;
+            }
+
+            vec2 rotate(in vec2 point, in float deg) {
+                float s = sin(deg);
+                float c = cos(deg);
+                return mat2(s, c, -c, s) * point;
+            }
+
+            vec2 voronoiPointFromRoot(in vec2 root, in float deg) {
+                vec2 point = hash2_2(root) - 0.5;
+                float s = sin(deg);
+                float c = cos(deg);
+                point = mat2(s, c, -c, s) * point * 0.66;
+                point += root + 0.5;
+                return point;
+            }
+
+            float degFromRootUV(in vec2 uv) {
+                return iTime * ANIMATION_SPEED * (hash1_2(uv) - 0.5) * 2.0;  
+            }
+
+            vec2 randomAround2_2(in vec2 point, in vec2 range, in vec2 uv) {
+                return point + (hash2_2(uv) - 0.5) * range;
+            }
+
+            vec3 fireParticles(in vec2 uv, in vec2 originalUV) {
+                vec3 particles = vec3(0.0);
+                vec2 rootUV = floor(uv);
+                float deg = degFromRootUV(rootUV);
+                vec2 pointUV = voronoiPointFromRoot(rootUV, deg);
+                float dist = 2.0;
+                float distBloom = 0.0;
+               
+                vec2 tempUV = uv + (noise2_2(uv * 2.0) - 0.5) * 0.1;
+                tempUV += -(noise2_2(uv * 3.0 + iTime) - 0.5) * 0.07;
+
+                dist = length(rotate(tempUV - pointUV, 0.7) * randomAround2_2(PARTICLE_SCALE, PARTICLE_SCALE_VAR, rootUV));
+                distBloom = length(rotate(tempUV - pointUV, 0.7) * randomAround2_2(PARTICLE_BLOOM_SCALE, PARTICLE_BLOOM_SCALE_VAR, rootUV));
+
+                particles += (1.0 - smoothstep(PARTICLE_SIZE * 0.6, PARTICLE_SIZE * 3.0, dist)) * SPARK_COLOR;
+                particles += pow((1.0 - smoothstep(0.0, PARTICLE_SIZE * 6.0, distBloom)) * 1.0, 3.0) * BLOOM_COLOR;
+
+                float border = (hash1_2(rootUV) - 0.5) * 2.0;
+                float disappear = 1.0 - smoothstep(border, border + 0.5, originalUV.y);
+                
+                border = (hash1_2(rootUV + 0.214) - 1.8) * 0.7;
+                float appear = smoothstep(border, border + 0.4, originalUV.y);
+                
+                return particles * disappear * appear;
+            }
+
+            vec3 layeredParticles(in vec2 uv, in float sizeMod, in float alphaMod, in int layers, in float smoke) { 
+                vec3 particles = vec3(0.0);
+                float size = 1.0;
+                float alpha = 1.0;
+                vec2 offset = vec2(0.0);
+                vec2 noiseOffset;
+                vec2 bokehUV;
+                
+                for (int i = 0; i < 15; i++) {
+                    if(i >= layers) break; // WebGL 相容性寫法
+                    noiseOffset = (noise2_2(uv * size * 2.0 + 0.5) - 0.5) * 0.15;
+                    bokehUV = (uv * size + iTime * MOVEMENT_DIRECTION * MOVEMENT_SPEED) + offset + noiseOffset; 
+                    particles += fireParticles(bokehUV, uv) * alpha * (1.0 - smoothstep(0.0, 1.0, smoke) * (float(i) / float(layers)));
+                    offset += hash2_2(vec2(alpha, alpha)) * 10.0;
+                    alpha *= alphaMod;
+                    size *= sizeMod;
+                }
+                return particles;
+            }
+
+            // ==========================================
+            // 愛心煙火設定 (Heart Fireworks Functions)
+            // ==========================================
             float star5SDF( vec2 p, float r, float m){
                 const vec2 k1 = vec2(0.809016994375, -0.587785252292);
                 const vec2 k2 = vec2(-k1.x,k1.y);
@@ -129,17 +242,13 @@
                 return vec2(16.0 * sin(t) * sin(t) * sin(t), -(13.0 * cos(t) - 5.0 * cos(2.0*t)- 2.0 * cos(3.0*t) - cos(4.0*t)));
             }
 
-            // --- 繪製愛心煙火 ---
             vec3 renderHeartFireworks(vec2 scaled_uv, vec2 center, float timeOffset) {
-                // [修改1] 降低時間流逝速度 (從 0.7 降至 0.35) 讓生命週期變長，發射頻率也變低
                 float t = (iTime * 0.35) + timeOffset; 
                 vec3 color = vec3(0.);
                 
-                // [修改2] 減少煙火重疊的層數 (從 6.0 降至 3.0) 讓畫面更乾淨
                 const float jmax = 3.0; 
                 const float imax = 20.0; 
                 
-                // 放寬可視半徑範圍以容納更大的愛心
                 float dist = length(scaled_uv - center);
                 if(dist > 1.8) return vec3(0.0);
 
@@ -150,27 +259,17 @@
                     float t2fb = fract(local_t); 
                     
                     float flasht = t2fb * (step(0.0, t2fb) - step(0.1, t2fb)) * 10.;
-                    
                     vec3 col = colorRibbon(hash1(ja + t1)); 
                     
                     for(float i=0.; i<imax; i++){ 
                         float ia = i/imax;
-                        
                         float randOffset = (hash1(ia + t1) - 0.5) * 0.2;
                         
-                        // [修改3] 放大愛心的尺寸 (倍率從 -0.022 擴大為 -0.045)
                         vec2 heartOffset = getHeartPosition(ia * TWO_PI + randOffset) * t2fb * -0.045; 
-                        
                         vec2 layer2_pos = center + heartOffset;
                         
-                        // [修改4] 完全移除地心引力，讓愛心純粹向外擴散不往下掉
-                        // layer2_pos.y -= t2fb * t2fb * 0.2; // 這行被移除了
-                        
                         float blink = step(1., mod(i, 2.)); 
-                        
-                        // 稍微放大五角星以適應更大的愛心
                         float sdf = star5SDF((scaled_uv - layer2_pos) * 1.2, 0.05, 0.09) + 0.05;
-                        
                         float fade = 1.0 - pow(t2fb, 2.0); 
                         
                         color += col * smoothstep(-0.016, flasht*3.6+4.5+ sin(t2fb*30.)*blink, (0.018/sdf)) * fade;
@@ -203,9 +302,10 @@
                 vec2 dirFromCenter = vUv - screenCenter;
                 float distFromCenter = length(dirFromCenter);
 
-                // --- 1. 相機底圖處理 (強烈的放射狀模糊) ---
+                // ==========================================
+                // 1. 相機底圖處理 (保留5倍放射狀模糊)
+                // ==========================================
                 vec3 cameraCol = vec3(0.0);
-                
                 float blurStrength = smoothstep(0.2, 0.8, distFromCenter) * 0.40; 
                 
                 const int SAMPLES = 24;
@@ -230,21 +330,30 @@
                 // 相機畫面壓暗
                 cameraCol *= 0.55;
                 
-                // --- 2. 融入背景點綴星空 ---
-                vec2 starUv = gl_FragCoord.xy / iResolution.xy;
-                vec3 stars_direction = normalize(vec3((starUv * 2.0 - 1.0) * vec2(screenAspect, 1.0), 1.0)); 
+                // ==========================================
+                // 2. 融入火焰背景 (Fire Shader)
+                // ==========================================
+                vec2 fireUV = (2.0 * gl_FragCoord.xy - iResolution.xy) / iResolution.x;
+                float fireVignette = 1.0 - smoothstep(0.4, 1.4, length(fireUV + vec2(0.0, 0.3)));
+                fireUV *= 1.8;
                 
-                float stars_threshold = 9.0; 
-                float stars_exposure = 175.0; 
-                float stars = pow(clamp(noise(stars_direction * 200.0), 0.0, 1.0), stars_threshold) * stars_exposure;
-                stars *= mix(0.4, 1.4, noise(stars_direction * 100.0 + vec3(iTime)));
+                float smokeIntensity = layeredNoise1_2(fireUV * 10.0 + iTime * 4.0 * MOVEMENT_DIRECTION * MOVEMENT_SPEED, 1.7, 0.7, 6, 0.2);
+                smokeIntensity *= pow(1.0 - smoothstep(-1.0, 1.6, fireUV.y), 2.0); 
+                vec3 smoke = smokeIntensity * SMOKE_COLOR * 0.8 * fireVignette;
                 
-                float starFocus = smoothstep(0.9, 0.3, distFromCenter);
-                stars *= starFocus;
+                smoke *= pow(layeredNoise1_2(fireUV * 4.0 + iTime * 0.5 * MOVEMENT_DIRECTION * MOVEMENT_SPEED, 1.8, 0.5, 3, 0.2), 2.0) * 1.5;
+                
+                vec3 particles = layeredParticles(fireUV, SIZE_MOD, ALPHA_MOD, LAYERS_COUNT, smokeIntensity);
+                vec3 fireBgCol = particles + smoke + SMOKE_COLOR * 0.02;
+                fireBgCol *= fireVignette;
+                fireBgCol = smoothstep(-0.08, 1.0, fireBgCol);
 
-                vec3 finalCol = clamp(cameraCol + vec3(stars), 0.0, 1.0);
+                // 將火焰疊加到背景 (Screen/Additive Blending)
+                vec3 finalCol = clamp(cameraCol + fireBgCol, 0.0, 1.0);
 
-                // --- 3. 愛心煙火噴發特效 ---
+                // ==========================================
+                // 3. 愛心煙火噴發特效
+                // ==========================================
                 vec2 uv = gl_FragCoord.xy / iResolution.xy;
                 uv.x -= 0.5;
                 uv.x *= screenAspect;
@@ -253,7 +362,6 @@
                 vec2 leftEye = transformCoordinates(vec2(1.0 - u_leftEyeRaw.x, u_leftEyeRaw.y), screenAspect, videoAspect);
                 vec2 rightEye = transformCoordinates(vec2(1.0 - u_rightEyeRaw.x, u_rightEyeRaw.y), screenAspect, videoAspect);
                 
-                // 將座標放大 2 倍以符合原始愛心 Shader 的數學空間 (-1 到 1)
                 vec2 scaled_uv = uv * 2.0;
                 vec2 scaled_leftEye = leftEye * 2.0;
                 vec2 scaled_rightEye = rightEye * 2.0;
@@ -266,7 +374,9 @@
                 
                 finalCol = clamp(finalCol + eyeFX, 0.0, 1.0);
                 
-                // --- 4. 畫面暗角 (Vignette) ---
+                // ==========================================
+                // 4. 全局畫面暗角 (Vignette)
+                // ==========================================
                 float vignette = smoothstep(0.75, 0.25, distFromCenter);
                 finalCol *= mix(0.3, 1.0, vignette);
 
