@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>whenever i see u | v9.4</title>
+    <title>whenever i see u | v10.0</title>
     <style>
-        /* --- 修正：鎖定全螢幕，防止 Safari 動態網址列推擠畫面 --- */
+        /* 鎖定全螢幕，防止 Safari 動態網址列推擠畫面 */
         html, body {
             margin: 0;
             padding: 0;
             background-color: #000;
             overflow: hidden;
-            position: fixed; /* 關鍵：鎖定整個頁面，禁止滾動與推擠 */
+            position: fixed; 
             width: 100%;
             height: 100%;
         }
@@ -20,9 +20,9 @@
             position: absolute;
             top: 0;
             left: 0;
-            width: 100%; /* 改用 100% 而非 100vw */
-            height: 100%; /* 改用 100% 而非 100vh */
-            display: block; /* 關鍵：消除 canvas 預設底部的 inline 空隙 */
+            width: 100%; 
+            height: 100%; 
+            display: block; 
             z-index: 10;
         }
 
@@ -34,18 +34,18 @@
             pointer-events: none;
         }
 
-        /* --- 開始畫面與圖片樣式 --- */
         #start-screen {
             position: absolute;
             top: 0;
             left: 0;
-            width: 100%; /* 改用 100% */
-            height: 100%; /* 改用 100% */
+            width: 100%; 
+            height: 100%; 
             background-color: #000;
             z-index: 20;
             display: flex;
             justify-content: center;
             align-items: center;
+            transition: opacity 0.8s ease;
         }
 
         #start-btn {
@@ -55,6 +55,13 @@
 
         #start-btn:active {
             transform: scale(0.95);
+        }
+
+        /* 讀取中的呼吸燈動畫 */
+        @keyframes pulse {
+            0% { opacity: 0.4; }
+            50% { opacity: 1.0; }
+            100% { opacity: 0.4; }
         }
 
         @media (orientation: portrait) {
@@ -82,7 +89,8 @@
         <img id="start-btn" src="start.png" alt="Start Experience">
     </div>
 
-    <video id="webcam" autoplay playsinline></video>
+    <!-- 加上 muted 防止桌機版部分瀏覽器阻擋渲染 -->
+    <video id="webcam" autoplay playsinline muted></video>
     <canvas id="webgl-canvas"></canvas>
 
     <script>
@@ -93,16 +101,12 @@
 
         let renderer, scene, camera, material, mesh, cameraTexture;
         
-        // --- 支援多張臉和嘴巴偵測的陣列 ---
-        const MAX_FACES = 2; // 設定最大偵測人數
-        let leftEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5));
-        let rightEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5));
-        let mouthsRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5));
-        let mouthsOpen = Array(MAX_FACES).fill(0.0); // 1.0 表示張開，0.0 表示閉合
+        const MAX_FACES = 2; 
+        let leftEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(-10, -10));
+        let rightEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(-10, -10));
+        let mouthsRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(-10, -10));
+        let mouthsOpen = Array(MAX_FACES).fill(0.0); 
         let faceCount = 0;
-
-        let videoWidth = 1280;
-        let videoHeight = 720;
 
         const vertexShader = `
             varying vec2 vUv;
@@ -118,25 +122,25 @@
             uniform vec2 u_videoResolution;
             uniform float iTime;
             
-            // Uniforms 陣列以支援多臉
             const int MAX_FACES = ${MAX_FACES};
+            
             uniform vec2 u_leftEyes[MAX_FACES];   
             uniform vec2 u_rightEyes[MAX_FACES];  
             uniform vec2 u_mouths[MAX_FACES];
             uniform float u_mouthsOpen[MAX_FACES];
             uniform int u_faceCount;
             
-            varying vec2 vUv;
+            varying vec2 vUv; 
 
             #define PI      3.141592653589793
             #define TWO_PI  6.283185307179586
 
             // ==========================================
-            // 背景煙火設定 (稀疏點綴版)
+            // 背景煙火設定
             // ==========================================
             #define Gravitational_ACCE vec2(0.0, -0.2)
-            #define NUM_SPARKS 15
-            #define NUM_FIREWORKS 3
+            #define NUM_SPARKS 20    
+            #define NUM_FIREWORKS 6  
             #define Period 8.0
 
             float rand(float co) { 
@@ -166,7 +170,13 @@
                     vec2 velocity;
                     velocity.x = 0.5*(rand(currentPeriod+fj*0.4)-0.5);
                     velocity.y = 0.5*(rand(currentPeriod+fj*0.5)-0.5);
+                    
+                    // 【關鍵修正 1】防護罩：絕對防止 Normalize 零向量造成的 NaN 大閃白
+                    if (length(velocity) < 0.0001) {
+                        velocity = vec2(0.01, 0.01); 
+                    }
                     velocity = normalize(velocity);
+                    
                     velocity *= 0.2 + rand(currentPeriod+fj*0.6) * 0.3;
                     
                     vec3 sparkColor;
@@ -179,7 +189,7 @@
             }
 
             // ==========================================
-            // 愛心煙火設定 (Heart Fireworks Functions)
+            // 愛心煙火設定
             // ==========================================
             float star5SDF( vec2 p, float r, float m){
                 const vec2 k1 = vec2(0.809016994375, -0.587785252292);
@@ -210,14 +220,14 @@
             }
 
             vec3 renderHeartFireworks(vec2 scaled_uv, vec2 center, float timeOffset) {
+                float dist = length(scaled_uv - center);
+                if(dist > 0.9) return vec3(0.0);
+
                 float t = (iTime * 0.35) + timeOffset; 
                 vec3 color = vec3(0.);
                 
-                const float jmax = 3.0; 
-                const float imax = 20.0; 
-                
-                float dist = length(scaled_uv - center);
-                if(dist > 1.8) return vec3(0.0);
+                const float jmax = 3.0;  
+                const float imax = 15.0; 
 
                 for(float j=0.; j<jmax; j++){
                     float ja = j/jmax;
@@ -237,28 +247,33 @@
                         
                         float blink = step(1., mod(k, 2.)); 
                         float sdf = star5SDF((scaled_uv - layer2_pos) * 1.2, 0.05, 0.09) + 0.05;
+                        
+                        // 【關鍵修正 2】防護罩：絕對防止除以 0 造成的 NaN 畫面閃崩
+                        float safeSdf = max(abs(sdf), 0.00001); 
                         float fade = 1.0 - pow(t2fb, 2.0); 
                         
-                        color += col * smoothstep(-0.016, flasht*3.6+4.5+ sin(t2fb*30.)*blink, (0.018/sdf)) * fade;
+                        color += col * smoothstep(-0.016, flasht*3.6+4.5+ sin(t2fb*30.)*blink, (0.018/safeSdf)) * fade;
                     }
                 }
                 return color;
             }
 
-            // --- 座標轉換校正 ---
-            vec2 transformCoordinates(vec2 rawCoord, float screenAspect, float videoAspect) {
-                vec2 uv = vec2(rawCoord.x, 1.0 - rawCoord.y);
+            vec2 rawToScaled(vec2 rawCoord, float screenAspect, float videoAspect) {
+                vec2 camUv = vec2(1.0 - rawCoord.x, 1.0 - rawCoord.y);
+
+                vec2 screenUv = camUv;
                 if (screenAspect < videoAspect) {
                     float scale = screenAspect / videoAspect;
-                    uv.x = (uv.x - 0.5) * scale + 0.5;
+                    screenUv.x = (camUv.x - 0.5) / scale + 0.5;
                 } else {
                     float scale = videoAspect / screenAspect;
-                    uv.y = (uv.y - 0.5) * scale + 0.5;
+                    screenUv.y = (camUv.y - 0.5) / scale + 0.5;
                 }
-                uv.x -= 0.5;
-                uv.x *= screenAspect;
-                uv.y -= 0.5;
-                return uv;
+
+                screenUv.x -= 0.5;
+                screenUv.x *= screenAspect;
+                screenUv.y -= 0.5;
+                return screenUv * 2.0;
             }
 
             void main() {
@@ -269,11 +284,10 @@
                 vec2 dirFromCenter = vUv - screenCenter;
                 float distFromCenter = length(dirFromCenter);
 
-                // 1. 相機底圖處理 (保留放射狀模糊)
                 vec3 cameraCol = vec3(0.0);
                 float blurStrength = smoothstep(0.2, 0.8, distFromCenter) * 0.40; 
                 
-                const int SAMPLES = 24;
+                const int SAMPLES = 10; 
                 for (int s = 0; s < SAMPLES; s++) {
                     float t_blur = (float(s) / float(SAMPLES - 1)) - 0.5;
                     vec2 sampleUV = vUv + dirFromCenter * (t_blur * blurStrength);
@@ -292,12 +306,10 @@
                 }
                 cameraCol /= float(SAMPLES);
                 
-                // 相機畫面壓暗，凸顯煙火高光
                 cameraCol *= 0.55;
                 vec3 finalCol = cameraCol;
 
-                // 2. 融入背景煙火
-                vec2 fwCoord = gl_FragCoord.xy / iResolution.y;
+                vec2 fwCoord = vUv * vec2(screenAspect, 1.0);
                 vec3 fwColor = vec3(0.0);
                 
                 for(int f=0; f < NUM_FIREWORKS; f++) {
@@ -312,8 +324,7 @@
                 }
                 finalCol = clamp(finalCol + fwColor, 0.0, 1.0);
 
-                // 3. 愛心煙火噴發特效 (多張臉部特徵)
-                vec2 uv = gl_FragCoord.xy / iResolution.xy;
+                vec2 uv = vUv;
                 uv.x -= 0.5;
                 uv.x *= screenAspect;
                 uv.y -= 0.5;
@@ -321,31 +332,29 @@
                 vec2 scaled_uv = uv * 2.0;
                 vec3 faceFX = vec3(0.0);
                 
-                // 遍歷所有偵測到的臉
                 for (int idx = 0; idx < MAX_FACES; idx++) {
                     if (idx >= u_faceCount) break;
 
-                    // 眼睛煙火
-                    vec2 leftEye = transformCoordinates(vec2(1.0 - u_leftEyes[idx].x, u_leftEyes[idx].y), screenAspect, videoAspect);
-                    vec2 rightEye = transformCoordinates(vec2(1.0 - u_rightEyes[idx].x, u_rightEyes[idx].y), screenAspect, videoAspect);
+                    vec2 scaled_leftEye = rawToScaled(u_leftEyes[idx], screenAspect, videoAspect);
+                    vec2 scaled_rightEye = rawToScaled(u_rightEyes[idx], screenAspect, videoAspect);
                     
-                    vec2 scaled_leftEye = leftEye * 2.0;
-                    vec2 scaled_rightEye = rightEye * 2.0;
-                    
-                    faceFX += renderHeartFireworks(scaled_uv, scaled_leftEye, float(idx) * 0.1);
-                    faceFX += renderHeartFireworks(scaled_uv, scaled_rightEye, float(idx) * 0.1 + 0.5);
+                    if (length(scaled_uv - scaled_leftEye) < 0.9) {
+                        faceFX += renderHeartFireworks(scaled_uv, scaled_leftEye, float(idx) * 0.1);
+                    }
+                    if (length(scaled_uv - scaled_rightEye) < 0.9) {
+                        faceFX += renderHeartFireworks(scaled_uv, scaled_rightEye, float(idx) * 0.1 + 0.5);
+                    }
 
-                    // 嘴巴煙火 (如果張開)
                     if (u_mouthsOpen[idx] > 0.5) {
-                        vec2 mouth = transformCoordinates(vec2(1.0 - u_mouths[idx].x, u_mouths[idx].y), screenAspect, videoAspect);
-                        vec2 scaled_mouth = mouth * 2.0;
-                        faceFX += renderHeartFireworks(scaled_uv, scaled_mouth, float(idx) * 0.1 + 0.25); 
+                        vec2 scaled_mouth = rawToScaled(u_mouths[idx], screenAspect, videoAspect);
+                        if (length(scaled_uv - scaled_mouth) < 0.9) {
+                            faceFX += renderHeartFireworks(scaled_uv, scaled_mouth, float(idx) * 0.1 + 0.25); 
+                        }
                     }
                 }
                 
                 finalCol = clamp(finalCol + faceFX, 0.0, 1.0);
                 
-                // 4. 全局畫面暗角 (Vignette)
                 float vignette = smoothstep(0.75, 0.25, distFromCenter);
                 finalCol *= mix(0.3, 1.0, vignette);
 
@@ -359,13 +368,18 @@
 
             renderer = new THREE.WebGLRenderer({ canvas: canvasElement, antialias: true });
             renderer.setSize(width, height);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
 
             scene = new THREE.Scene();
             camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-            cameraTexture = new THREE.VideoTexture(videoElement);
+            // 【關鍵修正 3】捨棄 VideoTexture 自動更新機制，改用手動控制的 Texture
+            // 這能確保只在相機確定有畫面時才更新，完全斷絕空紋理大閃白！
+            cameraTexture = new THREE.Texture(videoElement);
             cameraTexture.minFilter = THREE.LinearFilter;
             cameraTexture.magFilter = THREE.LinearFilter;
+            cameraTexture.format = THREE.RGBAFormat; 
+            cameraTexture.generateMipmaps = false; 
 
             const uniforms = {
                 u_cameraTexture: { value: cameraTexture },
@@ -394,7 +408,6 @@
         }
 
         function onWindowResize() {
-            // Three.js 會根據 window.innerHeight 重新繪製，而 CSS 已經鎖定，就不會再被拉扯
             const width = window.innerWidth;
             const height = window.innerHeight;
             renderer.setSize(width, height);
@@ -403,20 +416,19 @@
 
         function animate(timestamp) {
             requestAnimationFrame(animate);
-            material.uniforms.iTime.value = timestamp / 1000.0;
             
-            // 更新陣列 Uniforms
-            material.uniforms.u_leftEyes.value = leftEyesRaw;
-            material.uniforms.u_rightEyes.value = rightEyesRaw;
-            material.uniforms.u_mouths.value = mouthsRaw;
-            material.uniforms.u_mouthsOpen.value = mouthsOpen;
-            material.uniforms.u_faceCount.value = faceCount;
-            
-            if (videoElement.videoWidth) {
+            if (videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
+                material.uniforms.iTime.value = timestamp / 1000.0;
                 material.uniforms.u_videoResolution.value.set(videoElement.videoWidth, videoElement.videoHeight);
+                
+                material.uniforms.u_leftEyes.value = leftEyesRaw;
+                material.uniforms.u_rightEyes.value = rightEyesRaw;
+                material.uniforms.u_mouths.value = mouthsRaw;
+                material.uniforms.u_mouthsOpen.value = mouthsOpen;
+                material.uniforms.u_faceCount.value = faceCount;
+                
+                renderer.render(scene, camera);
             }
-
-            renderer.render(scene, camera);
         }
 
         const faceMesh = new FaceMesh({
@@ -430,12 +442,20 @@
             minTrackingConfidence: 0.5
         });
 
-        // 嘴巴張開的距離閾值 (可調整)
         const MOUTH_OPEN_THRESHOLD = 0.03; 
+        let isVideoReady = false;
 
         faceMesh.onResults(results => {
+            if (!isVideoReady) {
+                isVideoReady = true;
+                startScreen.style.opacity = '0';
+                setTimeout(() => {
+                    startScreen.style.display = 'none';
+                }, 800); 
+            }
+
             faceCount = 0;
-            mouthsOpen.fill(0.0); // 每幀重置嘴巴狀態
+            mouthsOpen.fill(0.0); 
 
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                 faceCount = Math.min(results.multiFaceLandmarks.length, MAX_FACES);
@@ -443,7 +463,6 @@
                 for (let idx = 0; idx < faceCount; idx++) {
                     const landmarks = results.multiFaceLandmarks[idx];
                     
-                    // 眼睛 LandMarks (左眼 468, 右眼 473)
                     const leftEye = landmarks[468];
                     const rightEye = landmarks[473];
                     
@@ -452,35 +471,39 @@
                         rightEyesRaw[idx].set(rightEye.x, rightEye.y);
                     }
 
-                    // 嘴巴 LandMarks (13: 上嘴唇內側中心, 14: 下嘴唇內側中心)
                     const upperLipInner = landmarks[13];
                     const lowerLipInner = landmarks[14];
 
                     if (upperLipInner && lowerLipInner) {
-                        // 計算嘴巴中心位置
-                        mouthsRaw[idx].set(
-                            (upperLipInner.x + lowerLipInner.x) / 2.0,
-                            (upperLipInner.y + lowerLipInner.y) / 2.0
-                        );
+                        let mouthCenterX = (upperLipInner.x + lowerLipInner.x) / 2.0;
+                        let mouthCenterY = (upperLipInner.y + lowerLipInner.y) / 2.0;
+                        
+                        mouthsRaw[idx].set(mouthCenterX, mouthCenterY);
 
-                        // 計算嘴巴張開距離
                         const mouthDistance = Math.sqrt(
                             Math.pow(upperLipInner.x - lowerLipInner.x, 2) +
                             Math.pow(upperLipInner.y - lowerLipInner.y, 2) +
                             Math.pow(upperLipInner.z - lowerLipInner.z, 2)
                         );
 
-                        // 判斷是否張開
                         if (mouthDistance > MOUTH_OPEN_THRESHOLD) {
                             mouthsOpen[idx] = 1.0; 
                         }
                     }
                 }
+            } else {
+                leftEyesRaw.fill(new THREE.Vector2(-10, -10));
+                rightEyesRaw.fill(new THREE.Vector2(-10, -10));
+                mouthsRaw.fill(new THREE.Vector2(-10, -10));
             }
         });
 
         const cameraUtils = new Camera(videoElement, {
             onFrame: async () => {
+                // 【關鍵修正 3 延續】只在確認相機有最新畫面傳入時，才通知顯示卡更新紋理
+                if (cameraTexture) {
+                    cameraTexture.needsUpdate = true;
+                }
                 await faceMesh.send({ image: videoElement });
             },
             width: 1280,
@@ -493,14 +516,16 @@
             if (isStarted) return;
             isStarted = true;
             
-            startScreen.style.display = 'none';
+            startBtn.style.pointerEvents = 'none';
+            startBtn.style.animation = 'pulse 1.5s infinite';
 
             initWebGL();
             cameraUtils.start().catch(err => {
                 console.error("Camera failed to start.", err);
-                alert("Please check your device settings to ensure camera access is enabled.");
+                alert("無法啟動相機，請確認您的裝置是否允許相機存取權限。");
                 
-                startScreen.style.display = 'flex'; 
+                startBtn.style.pointerEvents = 'auto';
+                startBtn.style.animation = 'none';
                 isStarted = false;
             });
         });
