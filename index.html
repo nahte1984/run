@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>whenever i see u | v10.1</title>
+    <title>whenever i see u | v10.2</title>
     <style>
         /* 鎖定全螢幕，防止 Safari 動態網址列推擠畫面 */
         html, body {
@@ -223,7 +223,8 @@
                 float dist = length(scaled_uv - center);
                 if(dist > 0.9) return vec3(0.0);
 
-                float t = (iTime * 0.35) + timeOffset; 
+                // 【修改點 1】微調煙火整體節奏 (原 0.35 -> 0.42)
+                float t = (iTime * 0.42) + timeOffset; 
                 vec3 color = vec3(0.);
                 
                 const float jmax = 3.0;  
@@ -250,7 +251,9 @@
                         
                         // 【關鍵修正 2】防護罩：絕對防止除以 0 造成的 NaN 畫面閃崩
                         float safeSdf = max(abs(sdf), 0.00001); 
-                        float fade = 1.0 - pow(t2fb, 2.0); 
+                        
+                        // 【修改點 2】縮短生命週期：乘以 1.25 讓淡出效果提早歸零 (原本是 pow(t2fb, 2.0))
+                        float fade = max(0.0, 1.0 - pow(t2fb * 1.25, 2.0)); 
                         
                         color += col * smoothstep(-0.016, flasht*3.6+4.5+ sin(t2fb*30.)*blink, (0.018/safeSdf)) * fade;
                     }
