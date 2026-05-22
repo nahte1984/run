@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v9.3.3</title>
+    <title>whenever i see u | v9.3.4</title>
     <style>
         body {
             margin: 0;
@@ -94,7 +94,7 @@
         let renderer, scene, camera, material, mesh, cameraTexture;
         
         // --- 支援多張臉和嘴巴偵測的陣列 ---
-        const MAX_FACES = 1; // 設定最大偵測人數
+        const MAX_FACES = 2; // 設定最大偵測人數
         let leftEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5));
         let rightEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5));
         let mouthsRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5));
