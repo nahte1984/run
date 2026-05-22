@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v9.2.3</title>
+    <title>whenever i see u | v9.3.0 (Multi-Face & Mouth)</title>
     <style>
         body {
             margin: 0;
@@ -95,9 +95,13 @@
 
         let renderer, scene, camera, material, mesh, cameraTexture;
         
-        let leftEyeRaw = new THREE.Vector2(0.5, 0.5);
-        let rightEyeRaw = new THREE.Vector2(0.5, 0.5);
-        let hasFace = false;
+        // --- 修改：支持多張臉和嘴巴偵測 ---
+        const MAX_FACES = 2; // 設置最大偵測人數
+        let leftEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5)); //
+        let rightEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5)); //
+        let mouthsRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5)); //
+        let mouthsOpen = Array(MAX_FACES).fill(0.0); // 1.0 表示張開，0.0 表示閉合
+        let faceCount = 0; //
 
         let videoWidth = 1280;
         let videoHeight = 720;
@@ -115,9 +119,15 @@
             uniform vec2 iResolution;
             uniform vec2 u_videoResolution;
             uniform float iTime;
-            uniform vec2 u_leftEyeRaw;   
-            uniform vec2 u_rightEyeRaw;  
-            uniform float u_hasFace;  
+            
+            // --- 修改：Uniforms 變更為數組以支持多臉 ---
+            const int MAX_FACES = ${MAX_FACES};
+            uniform vec2 u_leftEyes[MAX_FACES];   
+            uniform vec2 u_rightEyes[MAX_FACES];  
+            uniform vec2 u_mouths[MAX_FACES];
+            uniform float u_mouthsOpen[MAX_FACES]; //
+            uniform int u_faceCount;  //
+            
             varying vec2 vUv;
 
             #define PI      3.141592653589793
@@ -318,20 +328,32 @@
                 uv.x *= screenAspect;
                 uv.y -= 0.5;
                 
-                vec2 leftEye = transformCoordinates(vec2(1.0 - u_leftEyeRaw.x, u_leftEyeRaw.y), screenAspect, videoAspect);
-                vec2 rightEye = transformCoordinates(vec2(1.0 - u_rightEyeRaw.x, u_rightEyeRaw.y), screenAspect, videoAspect);
-                
                 vec2 scaled_uv = uv * 2.0;
-                vec2 scaled_leftEye = leftEye * 2.0;
-                vec2 scaled_rightEye = rightEye * 2.0;
+                vec3 faceFX = vec3(0.0);
                 
-                vec3 eyeFX = vec3(0.0);
-                if (u_hasFace > 0.5) {
-                    eyeFX += renderHeartFireworks(scaled_uv, scaled_leftEye, 0.0);
-                    eyeFX += renderHeartFireworks(scaled_uv, scaled_rightEye, 0.5);
+                // --- 修改：遍歷所有偵測到的臉 ---
+                for (int i = 0; i < MAX_FACES; i++) {
+                    if (i >= u_faceCount) break; // 超過實際偵測人數則停止
+
+                    // 眼睛煙火
+                    vec2 leftEye = transformCoordinates(vec2(1.0 - u_leftEyes.x, u_leftEyes.y), screenAspect, videoAspect);
+                    vec2 rightEye = transformCoordinates(vec2(1.0 - u_rightEyes.x, u_rightEyes.y), screenAspect, videoAspect);
+                    
+                    vec2 scaled_leftEye = leftEye * 2.0;
+                    vec2 scaled_rightEye = rightEye * 2.0;
+                    
+                    faceFX += renderHeartFireworks(scaled_uv, scaled_leftEye, float(i) * 0.1);
+                    faceFX += renderHeartFireworks(scaled_uv, scaled_rightEye, float(i) * 0.1 + 0.5);
+
+                    // 嘴巴煙火 (如果張開)
+                    if (u_mouthsOpen > 0.5) {
+                        vec2 mouth = transformCoordinates(vec2(1.0 - u_mouths.x, u_mouths.y), screenAspect, videoAspect);
+                        vec2 scaled_mouth = mouth * 2.0;
+                        faceFX += renderHeartFireworks(scaled_uv, scaled_mouth, float(cite: i) * 0.1 + 0.25); 
+                    }
                 }
                 
-                finalCol = clamp(finalCol + eyeFX, 0.0, 1.0);
+                finalCol = clamp(finalCol + faceFX, 0.0, 1.0);
                 
                 // ==========================================
                 // 4. 全局畫面暗角 (Vignette)
@@ -357,14 +379,17 @@
             cameraTexture.minFilter = THREE.LinearFilter;
             cameraTexture.magFilter = THREE.LinearFilter;
 
+            // --- 修改：更新 Uniforms 結構以匹配 Shader ---
             const uniforms = {
                 u_cameraTexture: { value: cameraTexture },
                 iResolution: { value: new THREE.Vector2(width, height) },
                 u_videoResolution: { value: new THREE.Vector2(1280, 720) }, 
                 iTime: { value: 0 },
-                u_leftEyeRaw: { value: leftEyeRaw },
-                u_rightEyeRaw: { value: rightEyeRaw },
-                u_hasFace: { value: 0.0 }
+                u_leftEyes: { value: leftEyesRaw }, //
+                u_rightEyes: { value: rightEyesRaw }, //
+                u_mouths: { value: mouthsRaw }, //
+                u_mouthsOpen: { value: mouthsOpen }, //
+                u_faceCount: { value: 0 } //
             };
 
             material = new THREE.ShaderMaterial({
@@ -391,9 +416,13 @@
         function animate(timestamp) {
             requestAnimationFrame(animate);
             material.uniforms.iTime.value = timestamp / 1000.0;
-            material.uniforms.u_leftEyeRaw.value.copy(leftEyeRaw);
-            material.uniforms.u_rightEyeRaw.value.copy(rightEyeRaw);
-            material.uniforms.u_hasFace.value = hasFace ? 1.0 : 0.0;
+            
+            // --- 修改：在每一幀更新所有臉部的數據 ---
+            material.uniforms.u_leftEyes.value = leftEyesRaw; //
+            material.uniforms.u_rightEyes.value = rightEyesRaw; //
+            material.uniforms.u_mouths.value = mouthsRaw; //
+            material.uniforms.u_mouthsOpen.value = mouthsOpen; //
+            material.uniforms.u_faceCount.value = faceCount; //
             
             if (videoElement.videoWidth) {
                 material.uniforms.u_videoResolution.value.set(videoElement.videoWidth, videoElement.videoHeight);
@@ -403,27 +432,61 @@
         }
 
         const faceMesh = new FaceMesh({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${cite: file}`
         });
 
+        // --- 修改：設置 maxNumFaces 為 MAX_FACES (2) ---
         faceMesh.setOptions({
-            maxNumFaces: 1,
+            maxNumFaces: MAX_FACES, //
             refineLandmarks: true,
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5
         });
 
-        faceMesh.onResults(results => {
-            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-                hasFace = true;
-                const landmarks = results.multiFaceLandmarks[0];
-                const leftEye = landmarks[468];
-                const rightEye = landmarks[473];
+        // 嘴巴張開的距離閾值 (根據實際情況微調)
+        const MOUTH_OPEN_THRESHOLD = 0.05; 
 
-                leftEyeRaw.set(leftEye.x, leftEye.y);
-                rightEyeRaw.set(rightEye.x, rightEye.y);
-            } else {
-                hasFace = false;
+        // --- 修改：處理多張臉和嘴巴數據 ---
+        faceMesh.onResults(results => {
+            faceCount = 0;
+            // 重置數據
+            mouthsOpen.fill(0.0); //
+
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                faceCount = Math.min(results.multiFaceLandmarks.length, MAX_FACES); //
+
+                for (let i = 0; i < faceCount; i++) {
+                    const landmarks = results.multiFaceLandmarks[i]; //
+                    
+                    // 眼睛 LandMarks (虹膜中心)
+                    const leftEye = landmarks; //
+                    const rightEye = landmarks; //
+                    leftEyesRaw.set(leftEye.x, leftEye.y); //
+                    rightEyesRaw.set(rightEye.x, rightEye.y); //
+
+                    // 嘴巴 LandMarks
+                    // 13: 上嘴唇內側中心, 14: 下嘴唇內側中心
+                    const upperLipInner = landmarks;
+                    const lowerLipInner = landmarks;
+
+                    // 計算嘴巴中心位置
+                    mouthsRaw.set(
+                        (upperLipInner.x + lowerLipInner.x) / 2.0,
+                        (upperLipInner.y + lowerLipInner.y) / 2.0
+                    );
+
+                    // 計算嘴巴張開距離 (使用歐幾里得距離)
+                    const mouthDistance = Math.sqrt(
+                        Math.pow(upperLipInner.x - lowerLipInner.x, 2) +
+                        Math.pow(upperLipInner.y - lowerLipInner.y, 2) +
+                        Math.pow(upperLipInner.z - lowerLipInner.z, 2)
+                    );
+
+                    // 判斷嘴巴是否張開
+                    if (mouthDistance > MOUTH_OPEN_THRESHOLD) {
+                        mouthsOpen = 1.0; 
+                    }
+                }
             }
         });
 
