@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>whenever i see u | v9.6</title>
+    <title>whenever i see u | v9.7</title>
     <style>
         /* 鎖定全螢幕，防止 Safari 動態網址列推擠畫面 */
         html, body {
@@ -93,7 +93,7 @@
         let renderer, scene, camera, material, mesh, cameraTexture;
         
         const MAX_FACES = 2; 
-        // 預設將座標放在畫面外，避免相機未啟動時閃爍
+        // 預設將座標放在畫面外 (-10, -10)，避免相機未啟動時閃爍
         let leftEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(-10, -10));
         let rightEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(-10, -10));
         let mouthsRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(-10, -10));
@@ -115,7 +115,8 @@
             uniform float iTime;
             
             const int MAX_FACES = ${MAX_FACES};
-            // 接收 JS 精準計算好的 Scaled 座標，不再由 Shader 自己瞎猜
+            
+            // 接收 JS 傳來的 0~1 原始座標
             uniform vec2 u_leftEyes[MAX_FACES];   
             uniform vec2 u_rightEyes[MAX_FACES];  
             uniform vec2 u_mouths[MAX_FACES];
@@ -128,11 +129,11 @@
             #define TWO_PI  6.283185307179586
 
             // ==========================================
-            // 背景煙火設定 (兩倍熱鬧版)
+            // 背景煙火設定
             // ==========================================
             #define Gravitational_ACCE vec2(0.0, -0.2)
-            #define NUM_SPARKS 25    // 原 12，翻倍
-            #define NUM_FIREWORKS 6  // 原 3，翻倍
+            #define NUM_SPARKS 20    // 依需求修改：火花數 20
+            #define NUM_FIREWORKS 6  
             #define Period 8.0
 
             float rand(float co) { 
@@ -206,16 +207,16 @@
             }
 
             vec3 renderHeartFireworks(vec2 scaled_uv, vec2 center, float timeOffset) {
-                // 距離大於 0.9 放棄計算，為超多粒子數量提供效能保障
+                // 距離大於 0.9 放棄計算，省 GPU 算力
                 float dist = length(scaled_uv - center);
                 if(dist > 0.9) return vec3(0.0);
 
                 float t = (iTime * 0.35) + timeOffset; 
                 vec3 color = vec3(0.);
                 
-                // --- 超熱鬧參數設定 ---
-                const float jmax = 4.0;  // 煙火層次：原 2.0 -> 4.0
-                const float imax = 25.0; // 每層粒子數：原 15.0 -> 25.0
+                // --- 依需求修改 ---
+                const float jmax = 3.0;  // 煙火層次：3 層
+                const float imax = 15.0; // 每層粒子數：15 顆
 
                 for(float j=0.; j<jmax; j++){
                     float ja = j/jmax;
@@ -241,6 +242,30 @@
                     }
                 }
                 return color;
+            }
+
+            // ==========================================
+            // 核心修正：將原始座標 100% 精準映射到畫面
+            // ==========================================
+            vec2 rawToScaled(vec2 rawCoord, float screenAspect, float videoAspect) {
+                // 1. 翻轉鏡像與 Y 軸，符合 WebGL 座標系 (MediaPipe 左上角是 0,0，WebGL 左下角是 0,0)
+                vec2 camUv = vec2(1.0 - rawCoord.x, 1.0 - rawCoord.y);
+
+                // 2. 完全反推 object-fit: cover 的裁切公式，算出它在螢幕上的真實相對位置
+                vec2 screenUv = camUv;
+                if (screenAspect < videoAspect) {
+                    float scale = screenAspect / videoAspect;
+                    screenUv.x = (camUv.x - 0.5) / scale + 0.5;
+                } else {
+                    float scale = videoAspect / screenAspect;
+                    screenUv.y = (camUv.y - 0.5) / scale + 0.5;
+                }
+
+                // 3. 轉換至 Shader 專用的 scaled_uv 空間
+                screenUv.x -= 0.5;
+                screenUv.x *= screenAspect;
+                screenUv.y -= 0.5;
+                return screenUv * 2.0;
             }
 
             void main() {
@@ -299,12 +324,12 @@
                 vec2 scaled_uv = uv * 2.0;
                 vec3 faceFX = vec3(0.0);
                 
-                // 直接使用計算好的絕對座標，不再有對位誤差
+                // 在 Shader 內即時計算絕對精準的座標
                 for (int idx = 0; idx < MAX_FACES; idx++) {
                     if (idx >= u_faceCount) break;
 
-                    vec2 scaled_leftEye = u_leftEyes[idx];
-                    vec2 scaled_rightEye = u_rightEyes[idx];
+                    vec2 scaled_leftEye = rawToScaled(u_leftEyes[idx], screenAspect, videoAspect);
+                    vec2 scaled_rightEye = rawToScaled(u_rightEyes[idx], screenAspect, videoAspect);
                     
                     if (length(scaled_uv - scaled_leftEye) < 0.9) {
                         faceFX += renderHeartFireworks(scaled_uv, scaled_leftEye, float(idx) * 0.1);
@@ -314,7 +339,7 @@
                     }
 
                     if (u_mouthsOpen[idx] > 0.5) {
-                        vec2 scaled_mouth = u_mouths[idx];
+                        vec2 scaled_mouth = rawToScaled(u_mouths[idx], screenAspect, videoAspect);
                         if (length(scaled_uv - scaled_mouth) < 0.9) {
                             faceFX += renderHeartFireworks(scaled_uv, scaled_mouth, float(idx) * 0.1 + 0.25); 
                         }
@@ -409,33 +434,6 @@
 
         const MOUTH_OPEN_THRESHOLD = 0.03; 
 
-        // 核心數學修正：精準計算 Cover 模式下的實體螢幕座標
-        function getMappedCoord(rawX, rawY) {
-            if (!videoElement.videoWidth || !window.innerWidth) return new THREE.Vector2(-10, -10);
-
-            let videoAspect = videoElement.videoWidth / videoElement.videoHeight;
-            let screenAspect = window.innerWidth / window.innerHeight;
-            let vUvX, vUvY;
-
-            if (screenAspect < videoAspect) {
-                let scale = screenAspect / videoAspect;
-                // 畫面窄，X被放大並偏移
-                vUvX = (0.5 - rawX) / scale + 0.5;
-                vUvY = 1.0 - rawY; 
-            } else {
-                let scale = videoAspect / screenAspect;
-                // 畫面寬，Y被放大並偏移
-                vUvX = 1.0 - rawX;
-                vUvY = (0.5 - rawY) / scale + 0.5;
-            }
-
-            // 轉換至 Shader 專用的 scaled_uv 空間
-            let scaledX = (vUvX - 0.5) * screenAspect * 2.0;
-            let scaledY = (vUvY - 0.5) * 2.0;
-
-            return new THREE.Vector2(scaledX, scaledY);
-        }
-
         faceMesh.onResults(results => {
             faceCount = 0;
             mouthsOpen.fill(0.0); 
@@ -450,9 +448,9 @@
                     const rightEye = landmarks[473];
                     
                     if (leftEye && rightEye) {
-                        // 使用新的數學函式計算完美對位座標
-                        leftEyesRaw[idx] = getMappedCoord(leftEye.x, leftEye.y);
-                        rightEyesRaw[idx] = getMappedCoord(rightEye.x, rightEye.y);
+                        // 回歸最單純的傳值，將數學計算全部交給 Shader，保證絕對精準
+                        leftEyesRaw[idx].set(leftEye.x, leftEye.y);
+                        rightEyesRaw[idx].set(rightEye.x, rightEye.y);
                     }
 
                     const upperLipInner = landmarks[13];
@@ -462,7 +460,7 @@
                         let mouthCenterX = (upperLipInner.x + lowerLipInner.x) / 2.0;
                         let mouthCenterY = (upperLipInner.y + lowerLipInner.y) / 2.0;
                         
-                        mouthsRaw[idx] = getMappedCoord(mouthCenterX, mouthCenterY);
+                        mouthsRaw[idx].set(mouthCenterX, mouthCenterY);
 
                         const mouthDistance = Math.sqrt(
                             Math.pow(upperLipInner.x - lowerLipInner.x, 2) +
